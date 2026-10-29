@@ -4,6 +4,7 @@
 #include "PuzzleGeometry/puzzleshapeloader.h"
 
 #include <QKeyEvent>
+#include <QGuiApplication>
 #include <QMatrix4x4>
 #include <QMouseEvent>
 #include <QQuickWindow>
@@ -12,6 +13,7 @@
 #include <QSGGeometryNode>
 #include <QSGTextureMaterial>
 #include <QSGTransformNode>
+#include <QStyleHints>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -27,7 +29,7 @@ namespace
     constexpr qreal MinimumZoom = 0.15;
     constexpr qreal MaximumZoom = 6.0;
 
-    class PuzzleRenderNode final : public QSGTransformNode
+    class PuzzleRenderNode final : public QSGNode
     {
     public:
         // QSGTextureMaterial references but does not own its texture.
@@ -37,6 +39,8 @@ namespace
         }
 
         QSGTexture* texture = nullptr;
+        QSGGeometryNode* backgroundNode = nullptr;
+        QSGTransformNode* contentNode = nullptr;
         QSGGeometryNode* pieceNode = nullptr;
         QSGGeometryNode* selectionNode = nullptr;
         QSGGeometryNode* marqueeFillNode = nullptr;
@@ -177,9 +181,24 @@ PuzzleCanvas::PuzzleCanvas(QQuickItem* parent)
       , m_shapeSet(PuzzleShapeLoader::load(QStringLiteral(":/puzzle-shapes/classic.json")))
 {
     setFlag(ItemHasContents, true);
-    setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
+    setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton);
     setKeepMouseGrab(true);
     setFocus(true);
+}
+
+QColor PuzzleCanvas::backgroundColor() const
+{
+    return m_backgroundColor;
+}
+
+void PuzzleCanvas::setBackgroundColor(const QColor& color)
+{
+    if (m_backgroundColor == color)
+        return;
+
+    m_backgroundColor = color;
+    emit backgroundColorChanged();
+    update();
 }
 
 // Splits the image into UV regions and assigns them to deterministic shuffled board slots.
@@ -226,6 +245,8 @@ void PuzzleCanvas::initializePieces()
         Piece piece;
         piece.position = QPointF(origin.x() + boardColumn * (pieceWidth + gap),
                                  origin.y() + boardRow * (pieceHeight + gap));
+        piece.rotationCenter = QPointF(pieceWidth * 0.5, pieceHeight * 0.5);
+        piece.quarterTurns = random.bounded(4);
         PuzzlePieceGeometry& geometry = pieceGeometry[id];
         piece.localBounds = geometry.localBounds;
         piece.outline = std::move(geometry.outline);
@@ -245,14 +266,52 @@ QPointF PuzzleCanvas::toWorld(const QPointF& screenPosition) const
     return (screenPosition - m_pan) / m_zoom;
 }
 
+// Positive quarter turns are clockwise in Qt's downward-pointing screen Y axis.
+QPointF PuzzleCanvas::rotatedLocalPoint(const Piece& piece, const QPointF& localPoint) const
+{
+    const QPointF offset = localPoint - piece.rotationCenter;
+    QPointF rotated;
+    switch (piece.quarterTurns % 4)
+    {
+    case 1:
+        rotated = QPointF(-offset.y(), offset.x());
+        break;
+    case 2:
+        rotated = QPointF(-offset.x(), -offset.y());
+        break;
+    case 3:
+        rotated = QPointF(offset.y(), -offset.x());
+        break;
+    default:
+        rotated = offset;
+        break;
+    }
+    return piece.rotationCenter + rotated;
+}
+
+QPolygonF PuzzleCanvas::rotatedOutline(const Piece& piece) const
+{
+    QPolygonF outline;
+    outline.reserve(piece.outline.size());
+    for (const QPointF& point : piece.outline)
+        outline.push_back(rotatedLocalPoint(piece, point));
+    return outline;
+}
+
+QRectF PuzzleCanvas::pieceWorldBounds(const Piece& piece) const
+{
+    return rotatedOutline(piece).boundingRect().translated(piece.position);
+}
+
 // Tests in reverse draw order so overlapping pieces select the visible topmost piece.
 int PuzzleCanvas::hitTest(const QPointF& worldPosition) const
 {
     for (auto it = m_drawOrder.crbegin(); it != m_drawOrder.crend(); ++it)
     {
         const Piece& piece = m_pieces.at(*it);
-        if (piece.localBounds.translated(piece.position).contains(worldPosition)
-            && piece.outline.containsPoint(worldPosition - piece.position, Qt::OddEvenFill))
+        const QPolygonF outline = rotatedOutline(piece).translated(piece.position);
+        if (outline.boundingRect().contains(worldPosition)
+            && outline.containsPoint(worldPosition, Qt::OddEvenFill))
             return *it;
     }
     return -1;
@@ -272,19 +331,28 @@ void PuzzleCanvas::clearSelection()
     markOverlayDirty();
 }
 
-// Preserves relative ordering while placing selected pieces at the top of the draw order.
-void PuzzleCanvas::raiseSelectedPieces()
+int PuzzleCanvas::selectedPieceCount() const
 {
-    QVector<int> unselected;
-    QVector<int> selected;
-    unselected.reserve(m_drawOrder.size());
-    selected.reserve(m_drawOrder.size());
+    return int(std::count_if(m_pieces.cbegin(), m_pieces.cend(),
+                             [](const Piece& piece) { return piece.selected; }));
+}
+
+// Preserves relative ordering while placing the pieces being moved on top.
+void PuzzleCanvas::raiseMovingPieces()
+{
+    QVector<int> stationary;
+    QVector<int> moving;
+    stationary.reserve(m_drawOrder.size());
+    moving.reserve(m_drawOrder.size());
     for (const int id : std::as_const(m_drawOrder))
     {
-        (m_pieces.at(id).selected ? selected : unselected).push_back(id);
+        const bool isMoving = m_movingSelection
+                                  ? m_pieces.at(id).selected
+                                  : id == m_activePiece;
+        (isMoving ? moving : stationary).push_back(id);
     }
-    unselected += selected;
-    m_drawOrder = std::move(unselected);
+    stationary += moving;
+    m_drawOrder = std::move(stationary);
     markGeometryDirty();
 }
 
@@ -295,7 +363,7 @@ void PuzzleCanvas::updateMarqueeSelection()
     for (int id = 0; id < m_pieces.size(); ++id)
     {
         const Piece& piece = m_pieces.at(id);
-        const bool inside = area.intersects(piece.localBounds.translated(piece.position));
+        const bool inside = area.intersects(pieceWorldBounds(piece));
         if (m_marqueeToggle)
             m_pieces[id].selected = m_selectionBeforeMarquee.at(id) != inside;
         else if (m_marqueeAdditive)
@@ -304,6 +372,34 @@ void PuzzleCanvas::updateMarqueeSelection()
             m_pieces[id].selected = inside;
     }
     markOverlayDirty();
+}
+
+// Keeps held dragging on one stable origin to avoid accumulating movement error.
+void PuzzleCanvas::moveActivePieces(const QPointF& screenPosition)
+{
+    const QPointF delta = toWorld(screenPosition) - m_pressWorld;
+    for (int id = 0; id < m_pieces.size(); ++id)
+    {
+        const bool isMoving = m_movingSelection
+                                  ? m_pieces.at(id).selected
+                                  : id == m_activePiece;
+        if (isMoving)
+            m_pieces[id].position = m_dragStartPositions.at(id) + delta;
+    }
+    markGeometryDirty();
+}
+
+void PuzzleCanvas::rotateMovingPieces()
+{
+    for (int id = 0; id < m_pieces.size(); ++id)
+    {
+        const bool isMoving = m_movingSelection
+                                  ? m_pieces.at(id).selected
+                                  : id == m_activePiece;
+        if (isMoving)
+            m_pieces[id].quarterTurns = (m_pieces.at(id).quarterTurns + 1) % 4;
+    }
+    markGeometryDirty();
 }
 
 // Revisions transfer invalidation safely from the GUI thread to the render thread.
@@ -332,16 +428,28 @@ void PuzzleCanvas::geometryChange(const QRectF& newGeometry, const QRectF& oldGe
 void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
 {
     forceActiveFocus();
+
+    if (m_interaction == Interaction::DragPieces)
+    {
+        // RMB rotates only pieces that are currently being moved.
+        if (event->button() == Qt::RightButton)
+        {
+            rotateMovingPieces();
+            event->accept();
+            return;
+        }
+    }
+
     m_pressScreen = event->position();
     m_pressWorld = toWorld(m_pressScreen);
     m_currentWorld = m_pressWorld;
 
-    // Panning takes precedence over piece hit testing.
-    if (event->button() == Qt::MiddleButton
-        || (event->button() == Qt::LeftButton && m_spaceHeld))
+    // Right-button panning takes precedence over piece hit testing.
+    if (event->button() == Qt::RightButton)
     {
         m_interaction = Interaction::Pan;
         m_panAtPress = m_pan;
+        m_panMoved = false;
         event->accept();
         return;
     }
@@ -357,24 +465,30 @@ void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
     const bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
     if (hit >= 0)
     {
-        // Control toggles; Shift extends; a plain click replaces the current selection.
+        bool beginMove = true;
         if (control)
         {
             m_pieces[hit].selected = !m_pieces.at(hit).selected;
             markOverlayDirty();
+            beginMove = m_pieces.at(hit).selected;
         }
-        else if (!m_pieces.at(hit).selected)
+        else if (shift)
         {
-            if (!shift)
-                clearSelection();
             m_pieces[hit].selected = true;
             markOverlayDirty();
         }
-
-        if (m_pieces.at(hit).selected)
+        else if (!(m_pieces.at(hit).selected && selectedPieceCount() > 1))
         {
+            // A normal LMB move has no persistent single-piece selection state.
+            clearSelection();
+        }
+
+        if (beginMove)
+        {
+            m_activePiece = hit;
+            m_movingSelection = m_pieces.at(hit).selected;
             // Every move is calculated from one stable drag origin to avoid accumulated error.
-            raiseSelectedPieces();
+            raiseMovingPieces();
             m_dragStartPositions.resize(m_pieces.size());
             for (int id = 0; id < m_pieces.size(); ++id)
                 m_dragStartPositions[id] = m_pieces.at(id).position;
@@ -402,18 +516,15 @@ void PuzzleCanvas::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_interaction == Interaction::Pan)
     {
+        if ((event->position() - m_pressScreen).manhattanLength()
+            >= QGuiApplication::styleHints()->startDragDistance())
+            m_panMoved = true;
         m_pan = m_panAtPress + event->position() - m_pressScreen;
         update();
     }
     else if (m_interaction == Interaction::DragPieces)
     {
-        const QPointF delta = toWorld(event->position()) - m_pressWorld;
-        for (int id = 0; id < m_pieces.size(); ++id)
-        {
-            if (m_pieces.at(id).selected)
-                m_pieces[id].position = m_dragStartPositions.at(id) + delta;
-        }
-        markGeometryDirty();
+        moveActivePieces(event->position());
     }
     else if (m_interaction == Interaction::Marquee)
     {
@@ -426,18 +537,48 @@ void PuzzleCanvas::mouseMoveEvent(QMouseEvent* event)
 // Commits the final marquee position and removes transient interaction visuals.
 void PuzzleCanvas::mouseReleaseEvent(QMouseEvent* event)
 {
-    const bool wasDraggingPieces = m_interaction == Interaction::DragPieces;
+    if (m_interaction == Interaction::DragPieces)
+    {
+        // Releasing the rotation button must not finish the LMB-held move.
+        if (event->button() == Qt::RightButton)
+        {
+            event->accept();
+            return;
+        }
+
+        moveActivePieces(event->position());
+        m_interaction = Interaction::None;
+        m_activePiece = -1;
+        m_movingSelection = false;
+        markGeometryDirty();
+        event->accept();
+        return;
+    }
+
+    if (m_interaction == Interaction::Pan)
+    {
+        if (m_panMoved)
+        {
+            m_pan = m_panAtPress + event->position() - m_pressScreen;
+        }
+        else
+        {
+            // Sub-threshold pointer jitter belongs to the click, not to panning.
+            m_pan = m_panAtPress;
+        }
+        m_interaction = Interaction::None;
+        markOverlayDirty();
+        event->accept();
+        return;
+    }
+
     if (m_interaction == Interaction::Marquee)
     {
         m_currentWorld = toWorld(event->position());
         updateMarqueeSelection();
     }
     m_interaction = Interaction::None;
-    // Dragged pieces return to the regular piece node after the drag is committed.
-    if (wasDraggingPieces)
-        markGeometryDirty();
-    else
-        markOverlayDirty();
+    markOverlayDirty();
     event->accept();
 }
 
@@ -455,36 +596,20 @@ void PuzzleCanvas::wheelEvent(QWheelEvent* event)
     event->accept();
 }
 
-// Enables Space-assisted panning and Escape-based selection clearing.
+// Escape cancels active movement and clears the selection.
 void PuzzleCanvas::keyPressEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_Space)
+    if (event->key() == Qt::Key_Escape)
     {
-        m_spaceHeld = true;
-        event->accept();
-    }
-    else if (event->key() == Qt::Key_Escape)
-    {
+        m_interaction = Interaction::None;
+        m_activePiece = -1;
+        m_movingSelection = false;
         clearSelection();
         event->accept();
     }
     else
     {
         QQuickItem::keyPressEvent(event);
-    }
-}
-
-// Ends Space-assisted panning when Space is released.
-void PuzzleCanvas::keyReleaseEvent(QKeyEvent* event)
-{
-    if (event->key() == Qt::Key_Space)
-    {
-        m_spaceHeld = false;
-        event->accept();
-    }
-    else
-    {
-        QQuickItem::keyReleaseEvent(event);
     }
 }
 
@@ -496,8 +621,15 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
     auto* root = static_cast<PuzzleRenderNode*>(oldNode);
     if (!root)
     {
-        // Every piece samples one mipmapped image texture through one shared material.
         root = new PuzzleRenderNode;
+        root->backgroundNode = createFlatNode(m_backgroundColor);
+        root->appendChildNode(root->backgroundNode);
+
+        // Pan and zoom affect puzzle content but never the canvas background.
+        root->contentNode = new QSGTransformNode;
+        root->appendChildNode(root->contentNode);
+
+        // Every piece samples one mipmapped image texture through one shared material.
         root->texture = window()->createTextureFromImage(m_image, QQuickWindow::TextureHasMipmaps);
         root->texture->setFiltering(QSGTexture::Linear);
         root->texture->setMipmapFiltering(QSGTexture::Linear);
@@ -508,23 +640,30 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         material->setFiltering(QSGTexture::Linear);
         root->pieceNode->setMaterial(material);
         root->pieceNode->setFlag(QSGNode::OwnsMaterial);
-        root->appendChildNode(root->pieceNode);
+        root->contentNode->appendChildNode(root->pieceNode);
 
         root->selectionNode = createFlatNode(QColor(255, 193, 7, 255));
-        root->appendChildNode(root->selectionNode);
+        root->contentNode->appendChildNode(root->selectionNode);
+
         // Keep this translucent node alive between marquee drags so it remains in the
         // renderer's alpha pass after a marquee that selected no pieces.
         root->marqueeFillNode = createFlatNode(QColor(70, 150, 255, 120));
-        root->appendChildNode(root->marqueeFillNode);
+        root->contentNode->appendChildNode(root->marqueeFillNode);
         root->marqueeBorderNode = createFlatNode(QColor(100, 180, 255, 255));
-        root->appendChildNode(root->marqueeBorderNode);
+        root->contentNode->appendChildNode(root->marqueeBorderNode);
     }
+
+    setColoredQuads(root->backgroundNode, {boundingRect()});
+    auto* backgroundMaterial = static_cast<QSGFlatColorMaterial*>(
+        root->backgroundNode->material());
+    backgroundMaterial->setColor(m_backgroundColor);
+    root->backgroundNode->markDirty(QSGNode::DirtyMaterial);
 
     // Pan and zoom touch only this matrix; all vertices stay in puzzle world coordinates.
     QMatrix4x4 transform;
     transform.translate(float(m_pan.x()), float(m_pan.y()));
     transform.scale(float(m_zoom));
-    root->setMatrix(transform);
+    root->contentNode->setMatrix(transform);
 
     if (root->geometryRevision != m_geometryRevision)
     {
@@ -563,7 +702,8 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
             for (int i = 0; i < piece.vertices.size(); ++i)
             {
                 const PuzzleMeshVertex& source = piece.vertices.at(i);
-                const QPointF position = piece.position + source.localPosition;
+                const QPointF position = piece.position
+                    + rotatedLocalPoint(piece, source.localPosition);
                 vertices[vertexOffset + i].set(float(position.x()), float(position.y()),
                                                float(source.textureUv.x()),
                                                float(source.textureUv.y()));
@@ -580,18 +720,22 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
     if (root->overlayRevision != m_overlayRevision)
     {
-        // Inverse zoom keeps selection and marquee borders approximately constant on screen.
+        // Only an actual multi-selection is highlighted; a lone moved piece is not.
         QVector<QPointF> selectionPoints;
         QVector<quint32> selectionIndices;
-        const qreal borderWidth = 3.0 / m_zoom;
-        for (const Piece& piece : std::as_const(m_pieces))
+        if (selectedPieceCount() > 1)
         {
-            if (piece.selected)
-                appendOutlineBorder(selectionPoints, selectionIndices, piece.outline,
-                                    piece.position, borderWidth);
+            for (const Piece& piece : std::as_const(m_pieces))
+            {
+                if (piece.selected)
+                    appendOutlineBorder(selectionPoints, selectionIndices,
+                                        rotatedOutline(piece), piece.position,
+                                        3.0 / m_zoom);
+            }
         }
         setColoredTriangles(root->selectionNode, selectionPoints, selectionIndices);
 
+        // Inverse zoom keeps marquee borders approximately constant on screen.
         QVector<QRectF> marqueeFill;
         QVector<QRectF> marqueeBorder;
         const bool marqueeActive = m_interaction == Interaction::Marquee;

@@ -3,6 +3,7 @@
 
 #include "PuzzleGeometry/puzzlegeometrygenerator.h"
 
+#include <QColor>
 #include <QImage>
 #include <QPointF>
 #include <QPolygonF>
@@ -17,10 +18,21 @@ class QWheelEvent;
 class PuzzleCanvas final : public QQuickItem
 {
     Q_OBJECT
+    Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor
+        NOTIFY backgroundColorChanged)
 
 public:
     /// Creates a canvas and loads the built-in test puzzle image.
     explicit PuzzleCanvas(QQuickItem* parent = nullptr);
+
+    /// Returns the color painted behind the complete puzzle canvas.
+    [[nodiscard]] QColor backgroundColor() const;
+
+    /// Changes the canvas background color.
+    void setBackgroundColor(const QColor& color);
+
+signals:
+    void backgroundColorChanged();
 
 protected:
     /// Synchronizes puzzle geometry and visual overlays with the Qt Quick render thread.
@@ -41,20 +53,19 @@ protected:
     /// Zooms around the cursor while keeping its world position fixed.
     void wheelEvent(QWheelEvent* event) override;
 
-    /// Handles keyboard-assisted panning and selection cancellation.
+    /// Handles keyboard-based interaction cancellation.
     void keyPressEvent(QKeyEvent* event) override;
-
-    /// Finishes temporary keyboard modes such as Space-based panning.
-    void keyReleaseEvent(QKeyEvent* event) override;
 
 private:
     struct Piece
     {
         QPointF position;
+        QPointF rotationCenter;
         QRectF localBounds;
         QPolygonF outline;
         QVector<PuzzleMeshVertex> vertices;
         QVector<quint16> indices;
+        int quarterTurns = 0;
         bool selected = false;
     };
 
@@ -75,17 +86,36 @@ private:
     /// Returns the topmost piece under a world-space point, or -1 when none is hit.
     [[nodiscard]] int hitTest(const QPointF& worldPosition) const;
 
+    /// Rotates a piece-local point clockwise in 90-degree increments.
+    [[nodiscard]] QPointF rotatedLocalPoint(const Piece& piece,
+                                            const QPointF& localPoint) const;
+
+    /// Returns the piece outline after applying its current rotation.
+    [[nodiscard]] QPolygonF rotatedOutline(const Piece& piece) const;
+
+    /// Returns the axis-aligned world bounds of a rotated piece.
+    [[nodiscard]] QRectF pieceWorldBounds(const Piece& piece) const;
+
     /// Returns the normalized world-space marquee rectangle.
     [[nodiscard]] QRectF marqueeRect() const;
 
     /// Clears the selection state of every piece.
     void clearSelection();
 
-    /// Moves selected pieces to the end of draw order so they render on top.
-    void raiseSelectedPieces();
+    /// Moves the active piece or selected group to the top of the draw order.
+    void raiseMovingPieces();
+
+    /// Returns how many pieces belong to the persistent group selection.
+    [[nodiscard]] int selectedPieceCount() const;
 
     /// Recalculates selection from the current marquee and modifier mode.
     void updateMarqueeSelection();
+
+    /// Positions the active piece or selected group relative to the drag origin.
+    void moveActivePieces(const QPointF& screenPosition);
+
+    /// Rotates every piece in the active move by 90 degrees clockwise.
+    void rotateMovingPieces();
 
     /// Invalidates piece geometry and every overlay that depends on it.
     void markGeometryDirty();
@@ -94,6 +124,7 @@ private:
     void markOverlayDirty();
 
     QImage m_image;
+    QColor m_backgroundColor = QColor(0x20, 0x24, 0x2b);
     PuzzleShapeSet m_shapeSet;
     QVector<Piece> m_pieces;
     QVector<int> m_drawOrder;
@@ -106,8 +137,10 @@ private:
     QPointF m_currentWorld;
     QPointF m_panAtPress;
     QPointF m_pan;
+    int m_activePiece = -1;
     qreal m_zoom = 1.0;
-    bool m_spaceHeld = false;
+    bool m_panMoved = false;
+    bool m_movingSelection = false;
     bool m_marqueeAdditive = false;
     bool m_marqueeToggle = false;
     bool m_initialized = false;
