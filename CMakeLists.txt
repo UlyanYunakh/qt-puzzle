@@ -10,7 +10,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.12 REQUIRED COMPONENTS Quick)
+find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
 
 set(PROJECT_SOURCES
         main.cpp
@@ -30,6 +30,12 @@ set(PROJECT_SOURCES
 qt_add_executable(Puzzle
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
+)
+
+qt_add_qml_module(Puzzle
+        URI Puzzle.UI
+        VERSION 1.0
+        QML_FILES src/UI/Main.qml
 )
 
 set_source_files_properties(
@@ -62,7 +68,7 @@ qt_add_resources(Puzzle "puzzle_config"
         FILES src/Config/puzzle-config.json
 )
 
-target_link_libraries(Puzzle PRIVATE Qt6::Quick)
+target_link_libraries(Puzzle PRIVATE Qt6::Quick Qt6::QuickControls2)
 target_include_directories(Puzzle PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 # Keep the Windows build runnable without relying on a machine-wide PATH.
@@ -116,4 +122,37 @@ if (BUILD_TESTING)
     )
     target_include_directories(PuzzleLogicTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_test(NAME PuzzleLogicTests COMMAND PuzzleLogicTests)
+
+    add_executable(PuzzleCanvasTests
+            tests/puzzlecanvas_tests.cpp
+            src/Config/puzzleconfig.cpp
+            src/Config/puzzleconfig.h
+            src/Items/PuzzleCanvas/puzzlecanvas.cpp
+            src/Items/PuzzleCanvas/puzzlecanvas.h
+            src/PuzzleLogic/puzzlelogic.cpp
+            src/PuzzleLogic/puzzlelogic.h
+            src/PuzzleGeometry/puzzlegeometrygenerator.cpp
+            src/PuzzleGeometry/puzzlegeometrygenerator.h
+            src/PuzzleGeometry/puzzleshapeloader.cpp
+            src/PuzzleGeometry/puzzleshapeloader.h
+            src/PuzzleGeometry/puzzleshapeset.h
+    )
+    target_include_directories(PuzzleCanvasTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(PuzzleCanvasTests PRIVATE Qt6::Quick)
+    qt_add_resources(PuzzleCanvasTests "test_puzzle_assets"
+            PREFIX "/assets"
+            FILES src/DefaultPuzzles/test-puzzle-by-daniel-leone.jpg
+    )
+    qt_add_resources(PuzzleCanvasTests "test_puzzle_shapes"
+            PREFIX "/puzzle-shapes"
+            FILES src/PuzzleShapes/classic.json
+    )
+    qt_add_resources(PuzzleCanvasTests "test_puzzle_config"
+            PREFIX "/config"
+            FILES src/Config/puzzle-config.json
+    )
+    add_test(NAME PuzzleCanvasTests COMMAND PuzzleCanvasTests)
+    set_tests_properties(PuzzleCanvasTests PROPERTIES
+            TIMEOUT 30
+    )
 endif ()

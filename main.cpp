@@ -2,7 +2,9 @@
 #include "Config/puzzleconfig.h"
 
 #include <QGuiApplication>
-#include <QQuickWindow>
+#include <QQmlApplicationEngine>
+#include <QQmlContext>
+#include <QtQml/qqml.h>
 
 int main(int argc, char* argv[])
 {
@@ -11,20 +13,19 @@ int main(int argc, char* argv[])
     const PuzzleConfig config = PuzzleConfigLoader::load(
         QStringLiteral(":/config/puzzle-config.json"));
 
-    QQuickWindow window;
-    window.setTitle(config.window.title);
-    window.setColor(config.appearance.background);
-    window.resize(config.window.width, config.window.height);
+    qmlRegisterType<PuzzleCanvas>("Puzzle.App", 1, 0, "PuzzleCanvas");
 
-    auto* canvas = new PuzzleCanvas(config, window.contentItem());
-    canvas->setParentItem(window.contentItem());
-    canvas->setSize(window.size());
-
-    QObject::connect(&window, &QQuickWindow::widthChanged,
-                     canvas, [canvas, &window] { canvas->setWidth(window.width()); });
-    QObject::connect(&window, &QQuickWindow::heightChanged,
-                     canvas, [canvas, &window] { canvas->setHeight(window.height()); });
-
-    window.show();
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("initialWindowWidth"),
+                                             config.window.width);
+    engine.rootContext()->setContextProperty(QStringLiteral("initialWindowHeight"),
+                                             config.window.height);
+    engine.rootContext()->setContextProperty(QStringLiteral("initialWindowTitle"),
+                                             config.window.title);
+    engine.rootContext()->setContextProperty(QStringLiteral("appBackgroundColor"),
+                                             config.appearance.background);
+    engine.loadFromModule(QStringLiteral("Puzzle.UI"), QStringLiteral("Main"));
+    if (engine.rootObjects().isEmpty())
+        return -1;
     return application.exec();
 }

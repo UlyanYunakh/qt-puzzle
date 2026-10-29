@@ -182,10 +182,16 @@ PuzzleCanvas::PuzzleCanvas(const PuzzleConfig& config, QQuickItem* parent)
       , m_backgroundColor(m_config.appearance.background)
       , m_shapeSet(PuzzleShapeLoader::load(m_config.shapeResource))
 {
+    m_maximumZoom = m_config.interaction.maximumZoom;
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton);
     setKeepMouseGrab(true);
     setFocus(true);
+}
+
+qreal PuzzleCanvas::maximumZoom() const
+{
+    return m_maximumZoom;
 }
 
 QColor PuzzleCanvas::backgroundColor() const
@@ -215,6 +221,81 @@ void PuzzleCanvas::setInitialLayoutConfig(const PuzzleInitialLayoutConfig& confi
     initializePieces();
 }
 
+bool PuzzleCanvas::startPuzzle(const QUrl& imageUrl, int columns, int rows)
+{
+    if (columns < 1 || rows < 1 || qint64(columns) * rows > 10000)
+        return false;
+
+    QString imagePath = m_config.imageResource;
+    if (!imageUrl.isEmpty())
+    {
+        if (imageUrl.isLocalFile())
+            imagePath = imageUrl.toLocalFile();
+        else if (imageUrl.scheme() == QStringLiteral("qrc"))
+            imagePath = QStringLiteral(":") + imageUrl.path();
+        else
+            imagePath = imageUrl.toString();
+    }
+
+    const QImage image(imagePath);
+    if (image.isNull())
+        return false;
+
+    m_config.columns = columns;
+    m_config.rows = rows;
+    m_image = image;
+    resetPieces();
+    initializePieces();
+    // A newly constructed QML item may not have received its final size yet;
+    // geometryChange() will initialize it as soon as usable dimensions arrive.
+    return true;
+}
+
+bool PuzzleCanvas::startPuzzleWithPieceCount(const QUrl& imageUrl, int pieceCount)
+{
+    if (pieceCount < 1 || pieceCount > 10000)
+        return false;
+
+    QString imagePath = m_config.imageResource;
+    if (!imageUrl.isEmpty())
+        imagePath = imageUrl.isLocalFile() ? imageUrl.toLocalFile() : imageUrl.toString();
+    const QImage image(imagePath);
+    if (image.isNull())
+        return false;
+
+    const qreal targetAspect = qreal(image.width()) / image.height();
+    const int idealColumns = std::max(1, int(std::round(
+                                          std::sqrt(pieceCount * targetAspect))));
+    int bestColumns = idealColumns;
+    int bestRows = std::max(1, int(std::round(qreal(pieceCount) / idealColumns)));
+    qreal bestError = std::numeric_limits<qreal>::max();
+    for (int columns = std::max(1, idealColumns - 8);
+         columns <= idealColumns + 8; ++columns)
+    {
+        const int approximateRows = std::max(
+            1, int(std::round(qreal(pieceCount) / columns)));
+        for (int rows = std::max(1, approximateRows - 1);
+             rows <= approximateRows + 1; ++rows)
+        {
+            // A cell is square when imageAspect * rows / columns == 1.
+            // Shape receives more weight than a small difference from the
+            // requested count, avoiding visibly stretched puzzle pieces.
+            const qreal cellAspect = targetAspect * rows / columns;
+            const qreal shapeError = std::abs(std::log(cellAspect));
+            const qreal countError = std::abs(columns * rows - pieceCount)
+                / qreal(pieceCount);
+            const qreal error = shapeError * 2.0 + countError;
+            if (error < bestError)
+            {
+                bestError = error;
+                bestColumns = columns;
+                bestRows = rows;
+            }
+        }
+    }
+    return startPuzzle(imageUrl, bestColumns, bestRows);
+}
+
 void PuzzleCanvas::resetPieces()
 {
     m_pieces.clear();
@@ -229,6 +310,9 @@ void PuzzleCanvas::resetPieces()
     m_secondaryPanning = false;
     m_initialized = false;
     m_puzzleCompleted = false;
+    m_zoom = 1.0;
+    m_pan = QPointF();
+    m_maximumZoom = m_config.interaction.maximumZoom;
     markGeometryDirty();
 }
 
@@ -248,19 +332,43 @@ void PuzzleCanvas::initializePieces()
     const qreal heightRatio = std::clamp<qreal>(layoutConfig.heightRatio,
                                                 0.1, 1.0);
 
-    // A uniform image scale preserves the source aspect ratio across the complete grid.
-    const qreal availableWidth = std::max<qreal>(100.0, width() * widthRatio
-                                                 - gap * (pieceColumns - 1));
-    const qreal availableHeight = std::max<qreal>(100.0, height() * heightRatio
-                                                  - gap * (pieceRows - 1));
+    // Size the completed image for the protected central workspace. Initial
+    // scatter spacing is independent of the solved row and column count.
+    const qreal availableWidth = std::max<qreal>(
+        100.0, width() * layoutConfig.centerClearWidthRatio);
+    const qreal availableHeight = std::max<qreal>(
+        100.0, height() * layoutConfig.centerClearHeightRatio);
     const qreal maximumImageScale = std::min(availableWidth / m_image.width(),
                                              availableHeight / m_image.height());
-    qreal imageScale = maximumImageScale
+    const qreal imageScale = maximumImageScale
         * std::clamp<qreal>(layoutConfig.pieceScale, 0.1, 1.0);
-    qreal pieceWidth = 0.0;
-    qreal pieceHeight = 0.0;
-    qreal pieceFootprint = 0.0;
-    QVector<PuzzlePieceGeometry> pieceGeometry;
+    const qreal pieceWidth = imageScale * m_image.width() / pieceColumns;
+    const qreal pieceHeight = imageScale * m_image.height() / pieceRows;
+    PuzzleShapeSet renderedShapeSet = m_shapeSet;
+    // Dense puzzles display very small pieces, where eight samples per Bezier
+    // are visually redundant and make startup triangulation disproportionately
+    // expensive. Preserve full detail for larger pieces and scale it down safely.
+    renderedShapeSet.samplesPerBezier = std::clamp(
+        int(std::min(pieceWidth, pieceHeight) / 4.0), 2,
+        m_shapeSet.samplesPerBezier);
+    QVector<PuzzlePieceGeometry> pieceGeometry = PuzzleGeometryGenerator::generate(
+        renderedShapeSet, pieceColumns, pieceRows, QSizeF(pieceWidth, pieceHeight),
+        m_config.geometrySeed);
+
+    qreal maximumHalfExtent = 0.0;
+    const QPointF rotationCenter(pieceWidth * 0.5, pieceHeight * 0.5);
+    for (const PuzzlePieceGeometry& geometry : std::as_const(pieceGeometry))
+    {
+        const QRectF bounds = geometry.localBounds;
+        maximumHalfExtent = std::max({
+            maximumHalfExtent,
+            std::abs(bounds.left() - rotationCenter.x()),
+            std::abs(bounds.right() - rotationCenter.x()),
+            std::abs(bounds.top() - rotationCenter.y()),
+            std::abs(bounds.bottom() - rotationCenter.y())
+        });
+    }
+    const qreal pieceFootprint = maximumHalfExtent * 2.0;
     QVector<QPointF> slotCenters;
     const QPointF layoutCenter(
         width() * std::clamp<qreal>(layoutConfig.centerX, 0.0, 1.0),
@@ -269,34 +377,15 @@ void PuzzleCanvas::initializePieces()
                             layoutCenter.y() - height() * heightRatio * 0.5,
                             width() * widthRatio, height() * heightRatio);
 
-    // Reduce piece scale only when necessary to fit every piece outside the
-    // protected center. Slots use the largest possible rotated outline bounds,
-    // so initially placed pieces cannot overlap regardless of their rotation.
-    constexpr int maximumPackingAttempts = 32;
+    // Reduce only scatter spacing when density requires it. Piece geometry
+    // remains sized for the central solved image even for 2,000-piece puzzles.
+    qreal packedGap = gap;
+    constexpr int maximumPackingAttempts = 64;
     for (int attempt = 0; attempt < maximumPackingAttempts; ++attempt)
     {
-        pieceWidth = imageScale * m_image.width() / pieceColumns;
-        pieceHeight = imageScale * m_image.height() / pieceRows;
-        pieceGeometry = PuzzleGeometryGenerator::generate(
-            m_shapeSet, pieceColumns, pieceRows, QSizeF(pieceWidth, pieceHeight),
-            m_config.geometrySeed);
-
-        qreal maximumHalfExtent = 0.0;
-        const QPointF rotationCenter(pieceWidth * 0.5, pieceHeight * 0.5);
-        for (const PuzzlePieceGeometry& geometry : std::as_const(pieceGeometry))
-        {
-            const QRectF bounds = geometry.localBounds;
-            maximumHalfExtent = std::max({
-                maximumHalfExtent,
-                std::abs(bounds.left() - rotationCenter.x()),
-                std::abs(bounds.right() - rotationCenter.x()),
-                std::abs(bounds.top() - rotationCenter.y()),
-                std::abs(bounds.bottom() - rotationCenter.y())
-            });
-        }
-        pieceFootprint = maximumHalfExtent * 2.0;
-        const qreal slotStep = pieceFootprint + gap;
-        const qreal maximumJitter = gap * 0.20
+        packedGap = gap * std::pow(0.88, attempt);
+        const qreal slotStep = pieceFootprint + packedGap;
+        const qreal maximumJitter = packedGap * 0.20
             * std::clamp<qreal>(layoutConfig.naturalJitter,
                                 0.0, 1.0);
         const qreal left = layoutArea.left() + pieceFootprint * 0.5 + maximumJitter;
@@ -330,7 +419,6 @@ void PuzzleCanvas::initializePieces()
 
         if (slotCenters.size() >= pieceCount)
             break;
-        imageScale *= 0.92;
     }
 
     if (slotCenters.size() < pieceCount)
@@ -338,6 +426,12 @@ void PuzzleCanvas::initializePieces()
 
     m_magnetRadius = std::min(pieceWidth, pieceHeight)
         * m_config.interaction.magnetRadiusRatio;
+    const qreal pieceSize = std::max<qreal>(0.001,
+                                            std::min(pieceWidth, pieceHeight));
+    m_maximumZoom = std::clamp(
+        m_config.interaction.zoomedPieceSize / pieceSize,
+        m_config.interaction.maximumZoom,
+        m_config.interaction.adaptiveZoomLimit);
     m_logic.reset(pieceColumns, pieceRows, pieceWidth, pieceHeight);
 
     // Shuffle the available perimeter slots and add bounded jitter. The slot
@@ -345,7 +439,7 @@ void PuzzleCanvas::initializePieces()
     QRandomGenerator random(layoutConfig.seed);
     for (int i = slotCenters.size() - 1; i > 0; --i)
         std::swap(slotCenters[i], slotCenters[random.bounded(i + 1)]);
-    const qreal maximumJitter = gap * 0.20
+    const qreal maximumJitter = packedGap * 0.20
         * std::clamp<qreal>(layoutConfig.naturalJitter, 0.0, 1.0);
 
     m_pieces.reserve(pieceCount);
@@ -918,7 +1012,7 @@ void PuzzleCanvas::wheelEvent(QWheelEvent* event)
     const qreal steps = event->angleDelta().y() / 120.0;
     const qreal nextZoom = std::clamp(m_zoom * std::pow(m_config.interaction.zoomStep, steps),
                                       m_config.interaction.minimumZoom,
-                                      m_config.interaction.maximumZoom);
+                                      m_maximumZoom);
     m_zoom = nextZoom;
     m_pan = cursor - anchor * m_zoom;
     markOverlayDirty();
@@ -1011,7 +1105,7 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         {
             geometry = new QSGGeometry(QSGGeometry::defaultAttributes_TexturedPoint2D(),
                                        vertexCount, indexCount,
-                                       QSGGeometry::UnsignedShortType);
+                                       QSGGeometry::UnsignedIntType);
             root->pieceNode->setGeometry(geometry);
             root->pieceNode->setFlag(QSGNode::OwnsGeometry);
         }
@@ -1021,7 +1115,7 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         }
 
         auto* vertices = geometry->vertexDataAsTexturedPoint2D();
-        auto* indices = geometry->indexDataAsUShort();
+        auto* indices = static_cast<quint32*>(geometry->indexData());
         int vertexOffset = 0;
         int indexOffset = 0;
         for (int drawIndex = 0; drawIndex < m_drawOrder.size(); ++drawIndex)
@@ -1038,7 +1132,7 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
                                                float(source.textureUv.y()));
             }
             for (int i = 0; i < piece.indices.size(); ++i)
-                indices[indexOffset + i] = quint16(vertexOffset + piece.indices.at(i));
+                indices[indexOffset + i] = quint32(vertexOffset) + piece.indices.at(i);
             vertexOffset += piece.vertices.size();
             indexOffset += piece.indices.size();
         }

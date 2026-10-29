@@ -22,6 +22,8 @@
   "interaction": {
     "minimumZoom": 0.15,
     "maximumZoom": 6.0,
+    "zoomedPieceSize": 180.0,
+    "adaptiveZoomLimit": 80.0,
     "magnetRadiusRatio": 0.25,
     "connectionRadiusRatio": 0.28,
     "maximumMagneticPull": 0.65,

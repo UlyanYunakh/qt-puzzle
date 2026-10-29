@@ -88,6 +88,10 @@ PuzzleConfig PuzzleConfigLoader::load(const QString& resourcePath)
                                                 .toDouble(config.interaction.minimumZoom);
     config.interaction.maximumZoom = interaction.value(QStringLiteral("maximumZoom"))
                                                 .toDouble(config.interaction.maximumZoom);
+    config.interaction.zoomedPieceSize = interaction.value(
+        QStringLiteral("zoomedPieceSize")).toDouble(config.interaction.zoomedPieceSize);
+    config.interaction.adaptiveZoomLimit = interaction.value(
+        QStringLiteral("adaptiveZoomLimit")).toDouble(config.interaction.adaptiveZoomLimit);
     config.interaction.magnetRadiusRatio = interaction.value(
         QStringLiteral("magnetRadiusRatio")).toDouble(config.interaction.magnetRadiusRatio);
     config.interaction.connectionRadiusRatio = interaction.value(
@@ -124,6 +128,8 @@ PuzzleConfig PuzzleConfigLoader::load(const QString& resourcePath)
         || config.imageResource.isEmpty()
         || config.shapeResource.isEmpty() || config.interaction.minimumZoom <= 0.0
         || config.interaction.maximumZoom < config.interaction.minimumZoom
+        || config.interaction.zoomedPieceSize <= 0.0
+        || config.interaction.adaptiveZoomLimit < config.interaction.maximumZoom
         || config.interaction.magnetRadiusRatio < 0.0
         || config.interaction.connectionRadiusRatio < 0.0
         || config.interaction.connectionRadiusRatio > 1.0

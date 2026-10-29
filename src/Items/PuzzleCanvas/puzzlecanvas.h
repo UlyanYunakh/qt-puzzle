@@ -12,6 +12,7 @@
 #include <QPolygonF>
 #include <QQuickItem>
 #include <QRectF>
+#include <QUrl>
 #include <QVector>
 
 #include <vector>
@@ -20,7 +21,7 @@ class QKeyEvent;
 class QMouseEvent;
 class QWheelEvent;
 
-class PuzzleCanvas final : public QQuickItem
+class PuzzleCanvas : public QQuickItem
 {
     Q_OBJECT
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor
@@ -39,11 +40,20 @@ public:
     /// Changes the canvas background color.
     void setBackgroundColor(const QColor& color);
 
+    /// Returns the piece-size-aware upper zoom limit for the current puzzle.
+    [[nodiscard]] qreal maximumZoom() const;
+
     /// Returns the settings used to distribute pieces before play begins.
     [[nodiscard]] const PuzzleInitialLayoutConfig& initialLayoutConfig() const;
 
     /// Rebuilds the unplayed puzzle using a configurable perimeter distribution.
     void setInitialLayoutConfig(const PuzzleInitialLayoutConfig& config);
+
+    /// Loads an image and starts a new puzzle with the requested grid dimensions.
+    Q_INVOKABLE bool startPuzzle(const QUrl& imageUrl, int columns, int rows);
+
+    /// Chooses a near-target grid whose individual pieces are close to square.
+    Q_INVOKABLE bool startPuzzleWithPieceCount(const QUrl& imageUrl, int pieceCount);
 
 signals:
     void backgroundColorChanged();
@@ -184,6 +194,7 @@ private:
     QPointF m_secondaryPanAtPress;
     int m_activePiece = -1;
     qreal m_zoom = 1.0;
+    qreal m_maximumZoom = 6.0;
     qreal m_magnetRadius = 0.0;
     bool m_panMoved = false;
     bool m_secondaryPressed = false;

@@ -24,6 +24,8 @@ struct PuzzleInteractionConfig
 {
     double minimumZoom = 0.15;
     double maximumZoom = 6.0;
+    double zoomedPieceSize = 180.0;
+    double adaptiveZoomLimit = 80.0;
     double magnetRadiusRatio = 0.25;
     double connectionRadiusRatio = 0.28;
     double maximumMagneticPull = 0.65;
