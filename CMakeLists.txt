@@ -14,6 +14,11 @@ set(PROJECT_SOURCES
         main.cpp
         src/Items/PuzzleCanvas/puzzlecanvas.cpp
         src/Items/PuzzleCanvas/puzzlecanvas.h
+        src/PuzzleGeometry/puzzlegeometrygenerator.cpp
+        src/PuzzleGeometry/puzzlegeometrygenerator.h
+        src/PuzzleGeometry/puzzleshapeloader.cpp
+        src/PuzzleGeometry/puzzleshapeloader.h
+        src/PuzzleGeometry/puzzleshapeset.h
 )
 
 qt_add_executable(Puzzle
@@ -26,9 +31,19 @@ set_source_files_properties(
         PROPERTIES QT_RESOURCE_ALIAS test-puzzle.jpg
 )
 
+set_source_files_properties(
+        src/PuzzleShapes/classic.json
+        PROPERTIES QT_RESOURCE_ALIAS classic.json
+)
+
 qt_add_resources(Puzzle "puzzle_assets"
         PREFIX "/assets"
         FILES src/DefaultPuzzles/test-puzzle-by-daniel-leone.jpg
+)
+
+qt_add_resources(Puzzle "puzzle_shapes"
+        PREFIX "/puzzle-shapes"
+        FILES src/PuzzleShapes/classic.json
 )
 
 target_link_libraries(Puzzle PRIVATE Qt6::Quick)

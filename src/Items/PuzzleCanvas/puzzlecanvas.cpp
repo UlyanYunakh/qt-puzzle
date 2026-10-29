@@ -1,5 +1,8 @@
 #include "puzzlecanvas.h"
 
+#include "PuzzleGeometry/puzzlegeometrygenerator.h"
+#include "PuzzleGeometry/puzzleshapeloader.h"
+
 #include <QKeyEvent>
 #include <QMatrix4x4>
 #include <QMouseEvent>
@@ -48,6 +51,9 @@ namespace
         auto* node = new QSGGeometryNode;
         auto* material = new QSGFlatColorMaterial;
         material->setColor(color);
+        // These nodes are interaction overlays and must remain after the opaque piece batch.
+        // Prevent the renderer from merging/reordering them with other flat-color geometry.
+        material->setFlag(QSGMaterial::NoBatching, true);
         node->setMaterial(material);
         node->setFlag(QSGNode::OwnsMaterial);
         return node;
@@ -93,6 +99,64 @@ namespace
         node->markDirty(QSGNode::DirtyGeometry);
     }
 
+    // Replaces a solid-color node's geometry with arbitrary indexed triangles.
+    void setColoredTriangles(QSGGeometryNode* node,
+                             const QVector<QPointF>& points,
+                             const QVector<quint32>& triangleIndices)
+    {
+        auto* geometry = node->geometry();
+        if (!geometry)
+        {
+            geometry = new QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 0, 0,
+                                       QSGGeometry::UnsignedIntType);
+            node->setGeometry(geometry);
+            node->setFlag(QSGNode::OwnsGeometry);
+        }
+
+        geometry->allocate(points.size(), triangleIndices.size());
+        auto* vertices = geometry->vertexDataAsPoint2D();
+        auto* indices = static_cast<quint32*>(geometry->indexData());
+        for (int i = 0; i < points.size(); ++i)
+            vertices[i].set(float(points.at(i).x()), float(points.at(i).y()));
+        std::copy(triangleIndices.cbegin(), triangleIndices.cend(), indices);
+
+        geometry->setDrawingMode(QSGGeometry::DrawTriangles);
+        node->markDirty(QSGNode::DirtyGeometry);
+    }
+
+    // Adds a screen-consistent strip around a piece's sampled outline.
+    void appendOutlineBorder(QVector<QPointF>& points,
+                             QVector<quint32>& indices,
+                             const QPolygonF& outline,
+                             const QPointF& position,
+                             qreal thickness)
+    {
+        const qreal halfThickness = thickness * 0.5;
+        for (int i = 0; i < outline.size(); ++i)
+        {
+            const QPointF start = position + outline.at(i);
+            const QPointF end = position + outline.at((i + 1) % outline.size());
+            const QPointF delta = end - start;
+            const qreal length = std::hypot(delta.x(), delta.y());
+            if (length <= 0.0001)
+                continue;
+
+            const QPointF direction = delta / length;
+            const QPointF normal(-direction.y() * halfThickness,
+                                 direction.x() * halfThickness);
+            const QPointF extension = direction * halfThickness;
+            const quint32 vertex = quint32(points.size());
+            points += {
+                start - extension + normal, end + extension + normal,
+                end + extension - normal, start - extension - normal
+            };
+            indices += {
+                vertex + 0, vertex + 1, vertex + 2,
+                vertex + 0, vertex + 2, vertex + 3
+            };
+        }
+    }
+
     // Uses quads instead of line primitives for consistent borders on every graphics backend.
     QVector<QRectF> borderQuads(const QRectF& rect, qreal thickness)
     {
@@ -110,9 +174,11 @@ namespace
 PuzzleCanvas::PuzzleCanvas(QQuickItem* parent)
     : QQuickItem(parent)
       , m_image(QStringLiteral(":/assets/test-puzzle.jpg"))
+      , m_shapeSet(PuzzleShapeLoader::load(QStringLiteral(":/puzzle-shapes/classic.json")))
 {
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
+    setKeepMouseGrab(true);
     setFocus(true);
 }
 
@@ -139,6 +205,9 @@ void PuzzleCanvas::initializePieces()
     const qreal layoutHeight = PieceRows * pieceHeight + (PieceRows - 1) * gap;
     const QPointF origin((width() - layoutWidth) * 0.5, (height() - layoutHeight) * 0.5);
 
+    QVector<PuzzlePieceGeometry> pieceGeometry = PuzzleGeometryGenerator::generate(
+        m_shapeSet, PieceColumns, PieceRows, QSizeF(pieceWidth, pieceHeight), 0x50555A5Au);
+
     // A fixed seed keeps startup placement repeatable while interactions are under development.
     QVector<int> shuffledSlots(PieceCount);
     std::iota(shuffledSlots.begin(), shuffledSlots.end(), 0);
@@ -150,20 +219,18 @@ void PuzzleCanvas::initializePieces()
     m_drawOrder.reserve(PieceCount);
     for (int id = 0; id < PieceCount; ++id)
     {
-        const int sourceColumn = id % PieceColumns;
-        const int sourceRow = id / PieceColumns;
         const int slot = shuffledSlots.at(id);
         const int boardColumn = slot % PieceColumns;
         const int boardRow = slot / PieceColumns;
 
         Piece piece;
-        piece.rect = QRectF(origin.x() + boardColumn * (pieceWidth + gap),
-                            origin.y() + boardRow * (pieceHeight + gap),
-                            pieceWidth, pieceHeight);
-        piece.sourceUv = QRectF(qreal(sourceColumn) / PieceColumns,
-                                qreal(sourceRow) / PieceRows,
-                                1.0 / PieceColumns,
-                                1.0 / PieceRows);
+        piece.position = QPointF(origin.x() + boardColumn * (pieceWidth + gap),
+                                 origin.y() + boardRow * (pieceHeight + gap));
+        PuzzlePieceGeometry& geometry = pieceGeometry[id];
+        piece.localBounds = geometry.localBounds;
+        piece.outline = std::move(geometry.outline);
+        piece.vertices = std::move(geometry.vertices);
+        piece.indices = std::move(geometry.indices);
         m_pieces.push_back(piece);
         m_drawOrder.push_back(id);
     }
@@ -183,7 +250,9 @@ int PuzzleCanvas::hitTest(const QPointF& worldPosition) const
 {
     for (auto it = m_drawOrder.crbegin(); it != m_drawOrder.crend(); ++it)
     {
-        if (m_pieces.at(*it).rect.contains(worldPosition))
+        const Piece& piece = m_pieces.at(*it);
+        if (piece.localBounds.translated(piece.position).contains(worldPosition)
+            && piece.outline.containsPoint(worldPosition - piece.position, Qt::OddEvenFill))
             return *it;
     }
     return -1;
@@ -225,7 +294,8 @@ void PuzzleCanvas::updateMarqueeSelection()
     const QRectF area = marqueeRect();
     for (int id = 0; id < m_pieces.size(); ++id)
     {
-        const bool inside = area.intersects(m_pieces.at(id).rect);
+        const Piece& piece = m_pieces.at(id);
+        const bool inside = area.intersects(piece.localBounds.translated(piece.position));
         if (m_marqueeToggle)
             m_pieces[id].selected = m_selectionBeforeMarquee.at(id) != inside;
         else if (m_marqueeAdditive)
@@ -307,7 +377,7 @@ void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
             raiseSelectedPieces();
             m_dragStartPositions.resize(m_pieces.size());
             for (int id = 0; id < m_pieces.size(); ++id)
-                m_dragStartPositions[id] = m_pieces.at(id).rect.topLeft();
+                m_dragStartPositions[id] = m_pieces.at(id).position;
             m_interaction = Interaction::DragPieces;
         }
     }
@@ -341,7 +411,7 @@ void PuzzleCanvas::mouseMoveEvent(QMouseEvent* event)
         for (int id = 0; id < m_pieces.size(); ++id)
         {
             if (m_pieces.at(id).selected)
-                m_pieces[id].rect.moveTopLeft(m_dragStartPositions.at(id) + delta);
+                m_pieces[id].position = m_dragStartPositions.at(id) + delta;
         }
         markGeometryDirty();
     }
@@ -440,11 +510,13 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         root->pieceNode->setFlag(QSGNode::OwnsMaterial);
         root->appendChildNode(root->pieceNode);
 
-        root->selectionNode = createFlatNode(QColor(255, 193, 7, 230));
+        root->selectionNode = createFlatNode(QColor(255, 193, 7, 255));
         root->appendChildNode(root->selectionNode);
-        root->marqueeFillNode = createFlatNode(QColor(70, 150, 255, 45));
+        // Keep this translucent node alive between marquee drags so it remains in the
+        // renderer's alpha pass after a marquee that selected no pieces.
+        root->marqueeFillNode = createFlatNode(QColor(70, 150, 255, 120));
         root->appendChildNode(root->marqueeFillNode);
-        root->marqueeBorderNode = createFlatNode(QColor(100, 180, 255, 220));
+        root->marqueeBorderNode = createFlatNode(QColor(100, 180, 255, 255));
         root->appendChildNode(root->marqueeBorderNode);
     }
 
@@ -459,8 +531,13 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         // All pieces remain in one batch. Triangles in this opaque geometry have equal depth,
         // so the first overlapping triangle wins the depth test. Reverse logical draw order
         // to submit the topmost (including actively dragged) pieces first.
-        const int vertexCount = m_drawOrder.size() * 4;
-        const int indexCount = m_drawOrder.size() * 6;
+        int vertexCount = 0;
+        int indexCount = 0;
+        for (const Piece& piece : std::as_const(m_pieces))
+        {
+            vertexCount += piece.vertices.size();
+            indexCount += piece.indices.size();
+        }
         auto* geometry = root->pieceNode->geometry();
         if (!geometry)
         {
@@ -477,29 +554,24 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
         auto* vertices = geometry->vertexDataAsTexturedPoint2D();
         auto* indices = geometry->indexDataAsUShort();
+        int vertexOffset = 0;
+        int indexOffset = 0;
         for (int drawIndex = 0; drawIndex < m_drawOrder.size(); ++drawIndex)
         {
             const int pieceId = m_drawOrder.at(m_drawOrder.size() - 1 - drawIndex);
             const Piece& piece = m_pieces.at(pieceId);
-            const QRectF rect = piece.rect;
-            const QRectF uv = piece.sourceUv;
-            const int vertex = drawIndex * 4;
-            vertices[vertex + 0].set(float(rect.left()), float(rect.top()),
-                                     float(uv.left()), float(uv.top()));
-            vertices[vertex + 1].set(float(rect.right()), float(rect.top()),
-                                     float(uv.right()), float(uv.top()));
-            vertices[vertex + 2].set(float(rect.right()), float(rect.bottom()),
-                                     float(uv.right()), float(uv.bottom()));
-            vertices[vertex + 3].set(float(rect.left()), float(rect.bottom()),
-                                     float(uv.left()), float(uv.bottom()));
-
-            const int index = drawIndex * 6;
-            indices[index + 0] = quint16(vertex + 0);
-            indices[index + 1] = quint16(vertex + 1);
-            indices[index + 2] = quint16(vertex + 2);
-            indices[index + 3] = quint16(vertex + 0);
-            indices[index + 4] = quint16(vertex + 2);
-            indices[index + 5] = quint16(vertex + 3);
+            for (int i = 0; i < piece.vertices.size(); ++i)
+            {
+                const PuzzleMeshVertex& source = piece.vertices.at(i);
+                const QPointF position = piece.position + source.localPosition;
+                vertices[vertexOffset + i].set(float(position.x()), float(position.y()),
+                                               float(source.textureUv.x()),
+                                               float(source.textureUv.y()));
+            }
+            for (int i = 0; i < piece.indices.size(); ++i)
+                indices[indexOffset + i] = quint16(vertexOffset + piece.indices.at(i));
+            vertexOffset += piece.vertices.size();
+            indexOffset += piece.indices.size();
         }
         geometry->setDrawingMode(QSGGeometry::DrawTriangles);
         root->pieceNode->markDirty(QSGNode::DirtyGeometry);
@@ -509,22 +581,31 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
     if (root->overlayRevision != m_overlayRevision)
     {
         // Inverse zoom keeps selection and marquee borders approximately constant on screen.
-        QVector<QRectF> selectionBorders;
+        QVector<QPointF> selectionPoints;
+        QVector<quint32> selectionIndices;
         const qreal borderWidth = 3.0 / m_zoom;
         for (const Piece& piece : std::as_const(m_pieces))
         {
             if (piece.selected)
-                selectionBorders += borderQuads(piece.rect, borderWidth);
+                appendOutlineBorder(selectionPoints, selectionIndices, piece.outline,
+                                    piece.position, borderWidth);
         }
-        setColoredQuads(root->selectionNode, selectionBorders);
+        setColoredTriangles(root->selectionNode, selectionPoints, selectionIndices);
 
         QVector<QRectF> marqueeFill;
         QVector<QRectF> marqueeBorder;
-        if (m_interaction == Interaction::Marquee)
+        const bool marqueeActive = m_interaction == Interaction::Marquee;
+        if (marqueeActive)
         {
             const QRectF area = marqueeRect();
             marqueeFill.push_back(area);
             marqueeBorder = borderQuads(area, 1.5 / m_zoom);
+        }
+        else
+        {
+            // A non-empty off-canvas quad avoids the zero-geometry transition that can
+            // make translucent nodes disappear from a later alpha-render pass.
+            marqueeFill.push_back(QRectF(-1000000.0, -1000000.0, 1.0, 1.0));
         }
         setColoredQuads(root->marqueeFillNode, marqueeFill);
         setColoredQuads(root->marqueeBorderNode, marqueeBorder);

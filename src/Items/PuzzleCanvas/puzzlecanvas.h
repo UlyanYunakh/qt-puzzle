@@ -1,8 +1,11 @@
 #ifndef PUZZLECANVAS_H
 #define PUZZLECANVAS_H
 
+#include "PuzzleGeometry/puzzlegeometrygenerator.h"
+
 #include <QImage>
 #include <QPointF>
+#include <QPolygonF>
 #include <QQuickItem>
 #include <QRectF>
 #include <QVector>
@@ -17,41 +20,46 @@ class PuzzleCanvas final : public QQuickItem
 
 public:
     /// Creates a canvas and loads the built-in test puzzle image.
-    explicit PuzzleCanvas(QQuickItem *parent = nullptr);
+    explicit PuzzleCanvas(QQuickItem* parent = nullptr);
 
 protected:
     /// Synchronizes puzzle geometry and visual overlays with the Qt Quick render thread.
-    QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *data) override;
+    QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData* data) override;
 
     /// Creates the initial piece layout when the canvas receives a usable size.
-    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
+    void geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry) override;
 
     /// Starts piece dragging, marquee selection, or panning based on the pressed button.
-    void mousePressEvent(QMouseEvent *event) override;
+    void mousePressEvent(QMouseEvent* event) override;
 
     /// Updates the active drag, marquee, or pan interaction.
-    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
 
     /// Completes the active pointer interaction.
-    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
     /// Zooms around the cursor while keeping its world position fixed.
-    void wheelEvent(QWheelEvent *event) override;
+    void wheelEvent(QWheelEvent* event) override;
 
     /// Handles keyboard-assisted panning and selection cancellation.
-    void keyPressEvent(QKeyEvent *event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
     /// Finishes temporary keyboard modes such as Space-based panning.
-    void keyReleaseEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
 
 private:
-    struct Piece {
-        QRectF rect;
-        QRectF sourceUv;
+    struct Piece
+    {
+        QPointF position;
+        QRectF localBounds;
+        QPolygonF outline;
+        QVector<PuzzleMeshVertex> vertices;
+        QVector<quint16> indices;
         bool selected = false;
     };
 
-    enum class Interaction {
+    enum class Interaction
+    {
         None,
         DragPieces,
         Marquee,
@@ -62,10 +70,10 @@ private:
     void initializePieces();
 
     /// Converts a canvas-space point into puzzle world coordinates.
-    [[nodiscard]] QPointF toWorld(const QPointF &screenPosition) const;
+    [[nodiscard]] QPointF toWorld(const QPointF& screenPosition) const;
 
     /// Returns the topmost piece under a world-space point, or -1 when none is hit.
-    [[nodiscard]] int hitTest(const QPointF &worldPosition) const;
+    [[nodiscard]] int hitTest(const QPointF& worldPosition) const;
 
     /// Returns the normalized world-space marquee rectangle.
     [[nodiscard]] QRectF marqueeRect() const;
@@ -86,6 +94,7 @@ private:
     void markOverlayDirty();
 
     QImage m_image;
+    PuzzleShapeSet m_shapeSet;
     QVector<Piece> m_pieces;
     QVector<int> m_drawOrder;
     QVector<QPointF> m_dragStartPositions;
