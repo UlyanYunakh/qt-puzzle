@@ -18,17 +18,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numeric>
+#include <limits>
+#include <stdexcept>
+#include <utility>
 
 namespace
 {
-    // These fixed values define the first milestone's puzzle. They can later become user settings.
-    constexpr int PieceColumns = 12;
-    constexpr int PieceRows = 8;
-    constexpr int PieceCount = PieceColumns * PieceRows;
-    constexpr qreal MinimumZoom = 0.15;
-    constexpr qreal MaximumZoom = 6.0;
-
     class PuzzleRenderNode final : public QSGNode
     {
     public:
@@ -176,9 +171,16 @@ namespace
 
 // Loads the embedded image and enables custom rendering and pointer input.
 PuzzleCanvas::PuzzleCanvas(QQuickItem* parent)
+    : PuzzleCanvas(PuzzleConfigLoader::load(QStringLiteral(":/config/puzzle-config.json")), parent)
+{
+}
+
+PuzzleCanvas::PuzzleCanvas(const PuzzleConfig& config, QQuickItem* parent)
     : QQuickItem(parent)
-      , m_image(QStringLiteral(":/assets/test-puzzle.jpg"))
-      , m_shapeSet(PuzzleShapeLoader::load(QStringLiteral(":/puzzle-shapes/classic.json")))
+      , m_config(config)
+      , m_image(m_config.imageResource)
+      , m_backgroundColor(m_config.appearance.background)
+      , m_shapeSet(PuzzleShapeLoader::load(m_config.shapeResource))
 {
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton);
@@ -201,51 +203,167 @@ void PuzzleCanvas::setBackgroundColor(const QColor& color)
     update();
 }
 
-// Splits the image into UV regions and assigns them to deterministic shuffled board slots.
+const PuzzleInitialLayoutConfig& PuzzleCanvas::initialLayoutConfig() const
+{
+    return m_config.initialLayout;
+}
+
+void PuzzleCanvas::setInitialLayoutConfig(const PuzzleInitialLayoutConfig& config)
+{
+    m_config.initialLayout = config;
+    resetPieces();
+    initializePieces();
+}
+
+void PuzzleCanvas::resetPieces()
+{
+    m_pieces.clear();
+    m_drawOrder.clear();
+    m_dragStartPositions.clear();
+    m_selectionBeforeMarquee.clear();
+    m_logic = PuzzleLogic();
+    m_interaction = Interaction::None;
+    m_activePiece = -1;
+    m_movingSelection = false;
+    m_secondaryPressed = false;
+    m_secondaryPanning = false;
+    m_initialized = false;
+    m_puzzleCompleted = false;
+    markGeometryDirty();
+}
+
+// Splits the image into UV regions and distributes pieces around a clear work area.
 void PuzzleCanvas::initializePieces()
 {
     if (m_initialized || m_image.isNull() || width() <= 1.0 || height() <= 1.0)
         return;
 
-    constexpr qreal gap = 12.0;
-    constexpr qreal horizontalMargin = 64.0;
-    constexpr qreal verticalMargin = 56.0;
+    const int pieceColumns = m_config.columns;
+    const int pieceRows = m_config.rows;
+    const int pieceCount = pieceColumns * pieceRows;
+    const PuzzleInitialLayoutConfig& layoutConfig = m_config.initialLayout;
+    const qreal gap = std::max<qreal>(0.0, layoutConfig.pieceGap);
+    const qreal widthRatio = std::clamp<qreal>(layoutConfig.widthRatio,
+                                               0.1, 1.0);
+    const qreal heightRatio = std::clamp<qreal>(layoutConfig.heightRatio,
+                                                0.1, 1.0);
 
     // A uniform image scale preserves the source aspect ratio across the complete grid.
-    const qreal availableWidth = std::max<qreal>(100.0, width() - 2.0 * horizontalMargin
-                                                 - gap * (PieceColumns - 1));
-    const qreal availableHeight = std::max<qreal>(100.0, height() - 2.0 * verticalMargin
-                                                  - gap * (PieceRows - 1));
-    const qreal imageScale = std::min(availableWidth / m_image.width(),
-                                      availableHeight / m_image.height());
-    const qreal pieceWidth = imageScale * m_image.width() / PieceColumns;
-    const qreal pieceHeight = imageScale * m_image.height() / PieceRows;
-    const qreal layoutWidth = PieceColumns * pieceWidth + (PieceColumns - 1) * gap;
-    const qreal layoutHeight = PieceRows * pieceHeight + (PieceRows - 1) * gap;
-    const QPointF origin((width() - layoutWidth) * 0.5, (height() - layoutHeight) * 0.5);
+    const qreal availableWidth = std::max<qreal>(100.0, width() * widthRatio
+                                                 - gap * (pieceColumns - 1));
+    const qreal availableHeight = std::max<qreal>(100.0, height() * heightRatio
+                                                  - gap * (pieceRows - 1));
+    const qreal maximumImageScale = std::min(availableWidth / m_image.width(),
+                                             availableHeight / m_image.height());
+    qreal imageScale = maximumImageScale
+        * std::clamp<qreal>(layoutConfig.pieceScale, 0.1, 1.0);
+    qreal pieceWidth = 0.0;
+    qreal pieceHeight = 0.0;
+    qreal pieceFootprint = 0.0;
+    QVector<PuzzlePieceGeometry> pieceGeometry;
+    QVector<QPointF> slotCenters;
+    const QPointF layoutCenter(
+        width() * std::clamp<qreal>(layoutConfig.centerX, 0.0, 1.0),
+        height() * std::clamp<qreal>(layoutConfig.centerY, 0.0, 1.0));
+    const QRectF layoutArea(layoutCenter.x() - width() * widthRatio * 0.5,
+                            layoutCenter.y() - height() * heightRatio * 0.5,
+                            width() * widthRatio, height() * heightRatio);
 
-    QVector<PuzzlePieceGeometry> pieceGeometry = PuzzleGeometryGenerator::generate(
-        m_shapeSet, PieceColumns, PieceRows, QSizeF(pieceWidth, pieceHeight), 0x50555A5Au);
-
-    // A fixed seed keeps startup placement repeatable while interactions are under development.
-    QVector<int> shuffledSlots(PieceCount);
-    std::iota(shuffledSlots.begin(), shuffledSlots.end(), 0);
-    QRandomGenerator random(0x50555A5Au);
-    for (int i = shuffledSlots.size() - 1; i > 0; --i)
-        std::swap(shuffledSlots[i], shuffledSlots[random.bounded(i + 1)]);
-
-    m_pieces.reserve(PieceCount);
-    m_drawOrder.reserve(PieceCount);
-    for (int id = 0; id < PieceCount; ++id)
+    // Reduce piece scale only when necessary to fit every piece outside the
+    // protected center. Slots use the largest possible rotated outline bounds,
+    // so initially placed pieces cannot overlap regardless of their rotation.
+    constexpr int maximumPackingAttempts = 32;
+    for (int attempt = 0; attempt < maximumPackingAttempts; ++attempt)
     {
-        const int slot = shuffledSlots.at(id);
-        const int boardColumn = slot % PieceColumns;
-        const int boardRow = slot / PieceColumns;
+        pieceWidth = imageScale * m_image.width() / pieceColumns;
+        pieceHeight = imageScale * m_image.height() / pieceRows;
+        pieceGeometry = PuzzleGeometryGenerator::generate(
+            m_shapeSet, pieceColumns, pieceRows, QSizeF(pieceWidth, pieceHeight),
+            m_config.geometrySeed);
+
+        qreal maximumHalfExtent = 0.0;
+        const QPointF rotationCenter(pieceWidth * 0.5, pieceHeight * 0.5);
+        for (const PuzzlePieceGeometry& geometry : std::as_const(pieceGeometry))
+        {
+            const QRectF bounds = geometry.localBounds;
+            maximumHalfExtent = std::max({
+                maximumHalfExtent,
+                std::abs(bounds.left() - rotationCenter.x()),
+                std::abs(bounds.right() - rotationCenter.x()),
+                std::abs(bounds.top() - rotationCenter.y()),
+                std::abs(bounds.bottom() - rotationCenter.y())
+            });
+        }
+        pieceFootprint = maximumHalfExtent * 2.0;
+        const qreal slotStep = pieceFootprint + gap;
+        const qreal maximumJitter = gap * 0.20
+            * std::clamp<qreal>(layoutConfig.naturalJitter,
+                                0.0, 1.0);
+        const qreal left = layoutArea.left() + pieceFootprint * 0.5 + maximumJitter;
+        const qreal right = layoutArea.right() - pieceFootprint * 0.5 - maximumJitter;
+        const qreal top = layoutArea.top() + pieceFootprint * 0.5 + maximumJitter;
+        const qreal bottom = layoutArea.bottom() - pieceFootprint * 0.5 - maximumJitter;
+        const qreal clearHalfWidth = width()
+            * std::clamp<qreal>(
+                layoutConfig.centerClearWidthRatio, 0.0, 0.95)
+            * 0.5
+            + pieceFootprint * 0.5 + maximumJitter;
+        const qreal clearHalfHeight = height()
+            * std::clamp<qreal>(
+                layoutConfig.centerClearHeightRatio, 0.0, 0.95)
+            * 0.5
+            + pieceFootprint * 0.5 + maximumJitter;
+
+        slotCenters.clear();
+        int row = 0;
+        for (qreal y = top; y <= bottom + 0.001; y += slotStep, ++row)
+        {
+            const qreal stagger = row % 2 == 0 ? 0.0 : slotStep * 0.5;
+            for (qreal x = left + stagger; x <= right + 0.001; x += slotStep)
+            {
+                const qreal normalizedX = (x - layoutCenter.x()) / clearHalfWidth;
+                const qreal normalizedY = (y - layoutCenter.y()) / clearHalfHeight;
+                if (normalizedX * normalizedX + normalizedY * normalizedY >= 1.0)
+                    slotCenters.push_back(QPointF(x, y));
+            }
+        }
+
+        if (slotCenters.size() >= pieceCount)
+            break;
+        imageScale *= 0.92;
+    }
+
+    if (slotCenters.size() < pieceCount)
+        throw std::runtime_error("Unable to fit non-overlapping pieces around the workspace");
+
+    m_magnetRadius = std::min(pieceWidth, pieceHeight)
+        * m_config.interaction.magnetRadiusRatio;
+    m_logic.reset(pieceColumns, pieceRows, pieceWidth, pieceHeight);
+
+    // Shuffle the available perimeter slots and add bounded jitter. The slot
+    // spacing retains enough clearance that the jitter cannot create overlap.
+    QRandomGenerator random(layoutConfig.seed);
+    for (int i = slotCenters.size() - 1; i > 0; --i)
+        std::swap(slotCenters[i], slotCenters[random.bounded(i + 1)]);
+    const qreal maximumJitter = gap * 0.20
+        * std::clamp<qreal>(layoutConfig.naturalJitter, 0.0, 1.0);
+
+    m_pieces.reserve(pieceCount);
+    m_drawOrder.reserve(pieceCount);
+    for (int id = 0; id < pieceCount; ++id)
+    {
+        QPointF slotCenter = slotCenters.at(id);
+        if (maximumJitter > 0.0)
+        {
+            slotCenter.rx() += random.generateDouble() * maximumJitter * 2.0
+                - maximumJitter;
+            slotCenter.ry() += random.generateDouble() * maximumJitter * 2.0
+                - maximumJitter;
+        }
 
         Piece piece;
-        piece.position = QPointF(origin.x() + boardColumn * (pieceWidth + gap),
-                                 origin.y() + boardRow * (pieceHeight + gap));
         piece.rotationCenter = QPointF(pieceWidth * 0.5, pieceHeight * 0.5);
+        piece.position = slotCenter - piece.rotationCenter;
         piece.quarterTurns = random.bounded(4);
         PuzzlePieceGeometry& geometry = pieceGeometry[id];
         piece.localBounds = geometry.localBounds;
@@ -254,6 +372,10 @@ void PuzzleCanvas::initializePieces()
         piece.indices = std::move(geometry.indices);
         m_pieces.push_back(piece);
         m_drawOrder.push_back(id);
+        m_logic.setPiecePose(id, {
+                                 {piece.position.x(), piece.position.y()},
+                                 piece.quarterTurns
+                             });
     }
 
     m_initialized = true;
@@ -377,6 +499,20 @@ void PuzzleCanvas::updateMarqueeSelection()
 // Keeps held dragging on one stable origin to avoid accumulating movement error.
 void PuzzleCanvas::moveActivePieces(const QPointF& screenPosition)
 {
+    if (!m_dragMoved)
+    {
+        const QPointF screenDelta = screenPosition - m_pressScreen;
+        if (std::hypot(screenDelta.x(), screenDelta.y())
+            < QGuiApplication::styleHints()->startDragDistance())
+            return;
+
+        // A single connected piece, or a selected subset of a component, is
+        // detached only when the pointer actually starts moving. This preserves
+        // the component during the first click of a double click.
+        m_logic.detachMovingPieces(movingPieceIds());
+        m_dragMoved = true;
+    }
+
     const QPointF delta = toWorld(screenPosition) - m_pressWorld;
     for (int id = 0; id < m_pieces.size(); ++id)
     {
@@ -386,19 +522,122 @@ void PuzzleCanvas::moveActivePieces(const QPointF& screenPosition)
         if (isMoving)
             m_pieces[id].position = m_dragStartPositions.at(id) + delta;
     }
+    synchronizeMovingPiecePoses();
+    applyMagneticAttraction();
     markGeometryDirty();
 }
 
-void PuzzleCanvas::rotateMovingPieces()
+std::vector<int> PuzzleCanvas::movingPieceIds() const
 {
+    std::vector<int> ids;
+    ids.reserve(m_pieces.size());
     for (int id = 0; id < m_pieces.size(); ++id)
     {
-        const bool isMoving = m_movingSelection
-                                  ? m_pieces.at(id).selected
-                                  : id == m_activePiece;
-        if (isMoving)
-            m_pieces[id].quarterTurns = (m_pieces.at(id).quarterTurns + 1) % 4;
+        if (m_movingSelection ? m_pieces.at(id).selected : id == m_activePiece)
+            ids.push_back(id);
     }
+    return ids;
+}
+
+void PuzzleCanvas::synchronizeMovingPiecePoses()
+{
+    for (const int id : movingPieceIds())
+    {
+        const Piece& piece = m_pieces.at(id);
+        m_logic.setPiecePose(id, {
+                                 {piece.position.x(), piece.position.y()},
+                                 piece.quarterTurns
+                             });
+    }
+}
+
+void PuzzleCanvas::applyMagneticAttraction()
+{
+    const std::vector<int> moving = movingPieceIds();
+    const PuzzleSnapResult attraction = m_logic.magneticAttraction(moving, m_magnetRadius);
+    if (!attraction.snapped || m_magnetRadius <= 0.0)
+        return;
+
+    const qreal distance = std::hypot(attraction.translation.x,
+                                      attraction.translation.y);
+    const qreal proximity = std::clamp(1.0 - distance / m_magnetRadius, 0.0, 1.0);
+    const qreal smoothProximity = proximity * proximity * (3.0 - 2.0 * proximity);
+
+    // Never apply the full correction while the pointer is held. The piece is
+    // attracted toward its neighbour, but the cursor can always pull it away.
+    const qreal pull = m_config.interaction.maximumMagneticPull * smoothProximity;
+    const QPointF translation(attraction.translation.x * pull,
+                              attraction.translation.y * pull);
+    for (const int id : moving)
+        m_pieces[id].position += translation;
+    synchronizeMovingPiecePoses();
+}
+
+PuzzleSnapResult PuzzleCanvas::snapMovingPieces()
+{
+    const std::vector<int> moving = movingPieceIds();
+    // Exact alignment is committed only in the inner part of the magnetic
+    // field, keeping release near its outer edge from causing a large jump.
+    const PuzzleSnapResult snap = m_logic.snapMovedPieces(
+        moving, m_magnetRadius * m_config.interaction.connectionRadiusRatio);
+    if (!snap.snapped)
+        return snap;
+
+    for (const int id : moving)
+    {
+        const PuzzlePiecePose& pose = m_logic.piecePose(id);
+        m_pieces[id].position = QPointF(pose.position.x, pose.position.y);
+    }
+
+    for (const auto& [first, second] : snap.newConnections)
+        emit piecesConnected(first, second);
+
+    if (!m_puzzleCompleted && m_logic.isComplete())
+    {
+        m_puzzleCompleted = true;
+        emit puzzleCompleted();
+    }
+    return snap;
+}
+
+void PuzzleCanvas::rotateMovingPieces(int direction)
+{
+    const std::vector<int> moving = movingPieceIds();
+    if (moving.empty())
+        return;
+    direction = direction < 0 ? -1 : 1;
+
+    // Connections inside the selection remain valid under a rigid rotation;
+    // only seams leading to pieces outside the selection must be detached.
+    m_logic.detachMovingPieces(moving);
+
+    qreal left = std::numeric_limits<qreal>::max();
+    qreal right = std::numeric_limits<qreal>::lowest();
+    qreal top = std::numeric_limits<qreal>::max();
+    qreal bottom = std::numeric_limits<qreal>::lowest();
+    for (const int id : moving)
+    {
+        const QPointF center = m_pieces.at(id).position + m_pieces.at(id).rotationCenter;
+        left = std::min(left, center.x());
+        right = std::max(right, center.x());
+        top = std::min(top, center.y());
+        bottom = std::max(bottom, center.y());
+    }
+    const QPointF groupCenter((left + right) * 0.5, (top + bottom) * 0.5);
+
+    for (const int id : moving)
+    {
+        Piece& piece = m_pieces[id];
+        const QPointF center = piece.position + piece.rotationCenter;
+        const QPointF offset = center - groupCenter;
+        const QPointF rotatedOffset = direction > 0
+                                          ? QPointF(-offset.y(), offset.x())
+                                          : QPointF(offset.y(), -offset.x());
+        piece.position = groupCenter + rotatedOffset - piece.rotationCenter;
+        piece.quarterTurns = (piece.quarterTurns + direction + 4) % 4;
+    }
+    m_dragMoved = true;
+    synchronizeMovingPiecePoses();
     markGeometryDirty();
 }
 
@@ -431,10 +670,15 @@ void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
 
     if (m_interaction == Interaction::DragPieces)
     {
-        // RMB rotates only pieces that are currently being moved.
+        // Defer the RMB decision until movement crosses the pan threshold or
+        // the button is released as a click.
         if (event->button() == Qt::RightButton)
         {
-            rotateMovingPieces();
+            m_secondaryPressed = true;
+            m_secondaryPanning = false;
+            m_secondaryPressScreen = event->position();
+            m_secondaryPanAtPress = m_pan;
+            m_rotateCounterClockwise = event->modifiers().testFlag(Qt::ShiftModifier);
             event->accept();
             return;
         }
@@ -450,6 +694,7 @@ void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
         m_interaction = Interaction::Pan;
         m_panAtPress = m_pan;
         m_panMoved = false;
+        m_rotateCounterClockwise = event->modifiers().testFlag(Qt::ShiftModifier);
         event->accept();
         return;
     }
@@ -492,6 +737,7 @@ void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
             m_dragStartPositions.resize(m_pieces.size());
             for (int id = 0; id < m_pieces.size(); ++id)
                 m_dragStartPositions[id] = m_pieces.at(id).position;
+            m_dragMoved = false;
             m_interaction = Interaction::DragPieces;
         }
     }
@@ -514,7 +760,22 @@ void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
 // Updates only the operation chosen when the pointer was pressed.
 void PuzzleCanvas::mouseMoveEvent(QMouseEvent* event)
 {
-    if (m_interaction == Interaction::Pan)
+    if (m_interaction == Interaction::DragPieces && m_secondaryPressed)
+    {
+        const QPointF secondaryDelta = event->position() - m_secondaryPressScreen;
+        if (!m_secondaryPanning
+            && std::hypot(secondaryDelta.x(), secondaryDelta.y())
+            >= QGuiApplication::styleHints()->startDragDistance())
+            m_secondaryPanning = true;
+
+        if (m_secondaryPanning)
+            m_pan = m_secondaryPanAtPress + secondaryDelta;
+
+        // Updating the dragged pieces after the pan keeps them beneath the
+        // cursor while their world coordinates follow the moving viewport.
+        moveActivePieces(event->position());
+    }
+    else if (m_interaction == Interaction::Pan)
     {
         if ((event->position() - m_pressScreen).manhattanLength()
             >= QGuiApplication::styleHints()->startDragDistance())
@@ -539,14 +800,38 @@ void PuzzleCanvas::mouseReleaseEvent(QMouseEvent* event)
 {
     if (m_interaction == Interaction::DragPieces)
     {
-        // Releasing the rotation button must not finish the LMB-held move.
+        // RMB click rotates; RMB drag has already panned. In either case the
+        // original LMB piece drag remains active.
         if (event->button() == Qt::RightButton)
         {
+            if (m_secondaryPressed && !m_secondaryPanning)
+            {
+                rotateMovingPieces(m_rotateCounterClockwise ? -1 : 1);
+                // Include the rotation in the stable drag origin, otherwise the
+                // next pointer update would restore pre-rotation positions.
+                const QPointF currentDelta = toWorld(event->position()) - m_pressWorld;
+                for (const int id : movingPieceIds())
+                    m_dragStartPositions[id] = m_pieces.at(id).position - currentDelta;
+            }
+            m_secondaryPressed = false;
+            m_secondaryPanning = false;
             event->accept();
             return;
         }
 
         moveActivePieces(event->position());
+        if (m_dragMoved)
+        {
+            const std::vector<int> placedIds = movingPieceIds();
+            const PuzzleSnapResult placement = snapMovingPieces();
+            QList<int> qtPlacedIds;
+            qtPlacedIds.reserve(placedIds.size());
+            for (const int id : placedIds)
+                qtPlacedIds.push_back(id);
+            emit piecesPlaced(qtPlacedIds, placement.snapped);
+        }
+        m_secondaryPressed = false;
+        m_secondaryPanning = false;
         m_interaction = Interaction::None;
         m_activePiece = -1;
         m_movingSelection = false;
@@ -565,6 +850,20 @@ void PuzzleCanvas::mouseReleaseEvent(QMouseEvent* event)
         {
             // Sub-threshold pointer jitter belongs to the click, not to panning.
             m_pan = m_panAtPress;
+
+            // RMB click rotates the clicked piece, or its persistent selection.
+            // RMB drag remains reserved for canvas panning.
+            const int hit = hitTest(m_pressWorld);
+            if (hit >= 0)
+            {
+                m_activePiece = hit;
+                m_movingSelection = m_pieces.at(hit).selected
+                    && selectedPieceCount() > 1;
+                rotateMovingPieces(m_rotateCounterClockwise ? -1 : 1);
+                m_activePiece = -1;
+                m_movingSelection = false;
+                m_dragMoved = false;
+            }
         }
         m_interaction = Interaction::None;
         markOverlayDirty();
@@ -582,14 +881,44 @@ void PuzzleCanvas::mouseReleaseEvent(QMouseEvent* event)
     event->accept();
 }
 
+// The first click/release is intentionally non-destructive until movement crosses
+// the drag threshold, so the original component is still available here.
+void PuzzleCanvas::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (event->button() != Qt::LeftButton)
+    {
+        event->ignore();
+        return;
+    }
+
+    const int hit = hitTest(toWorld(event->position()));
+    if (hit < 0)
+    {
+        event->accept();
+        return;
+    }
+
+    const std::vector<int> component = m_logic.connectedComponent(hit);
+    clearSelection();
+    for (const int id : component)
+        m_pieces[id].selected = true;
+
+    m_interaction = Interaction::None;
+    m_activePiece = -1;
+    m_movingSelection = false;
+    markOverlayDirty();
+    event->accept();
+}
+
 // Solves a new pan value that keeps the cursor's world point stationary while zooming.
 void PuzzleCanvas::wheelEvent(QWheelEvent* event)
 {
     const QPointF cursor = event->position();
     const QPointF anchor = toWorld(cursor);
     const qreal steps = event->angleDelta().y() / 120.0;
-    const qreal nextZoom = std::clamp(m_zoom * std::pow(1.15, steps),
-                                      MinimumZoom, MaximumZoom);
+    const qreal nextZoom = std::clamp(m_zoom * std::pow(m_config.interaction.zoomStep, steps),
+                                      m_config.interaction.minimumZoom,
+                                      m_config.interaction.maximumZoom);
     m_zoom = nextZoom;
     m_pan = cursor - anchor * m_zoom;
     markOverlayDirty();
@@ -642,14 +971,14 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         root->pieceNode->setFlag(QSGNode::OwnsMaterial);
         root->contentNode->appendChildNode(root->pieceNode);
 
-        root->selectionNode = createFlatNode(QColor(255, 193, 7, 255));
+        root->selectionNode = createFlatNode(m_config.appearance.selection);
         root->contentNode->appendChildNode(root->selectionNode);
 
         // Keep this translucent node alive between marquee drags so it remains in the
         // renderer's alpha pass after a marquee that selected no pieces.
-        root->marqueeFillNode = createFlatNode(QColor(70, 150, 255, 120));
+        root->marqueeFillNode = createFlatNode(m_config.appearance.marqueeFill);
         root->contentNode->appendChildNode(root->marqueeFillNode);
-        root->marqueeBorderNode = createFlatNode(QColor(100, 180, 255, 255));
+        root->marqueeBorderNode = createFlatNode(m_config.appearance.marqueeBorder);
         root->contentNode->appendChildNode(root->marqueeBorderNode);
     }
 
@@ -730,7 +1059,7 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
                 if (piece.selected)
                     appendOutlineBorder(selectionPoints, selectionIndices,
                                         rotatedOutline(piece), piece.position,
-                                        3.0 / m_zoom);
+                                        m_config.appearance.selectionBorderWidth / m_zoom);
             }
         }
         setColoredTriangles(root->selectionNode, selectionPoints, selectionIndices);
@@ -743,7 +1072,8 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         {
             const QRectF area = marqueeRect();
             marqueeFill.push_back(area);
-            marqueeBorder = borderQuads(area, 1.5 / m_zoom);
+            marqueeBorder = borderQuads(
+                area, m_config.appearance.marqueeBorderWidth / m_zoom);
         }
         else
         {

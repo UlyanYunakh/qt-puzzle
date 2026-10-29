@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "puzzle": {
+    "columns": 12,
+    "rows": 8,
+    "geometrySeed": "0x50555A5A",
+    "imageResource": ":/assets/test-puzzle.jpg",
+    "shapeResource": ":/puzzle-shapes/classic.json"
+  },
+  "initialLayout": {
+    "centerX": 0.5,
+    "centerY": 0.5,
+    "widthRatio": 0.9,
+    "heightRatio": 0.86,
+    "pieceGap": 15.0,
+    "pieceScale": 0.72,
+    "centerClearWidthRatio": 0.46,
+    "centerClearHeightRatio": 0.48,
+    "naturalJitter": 0.75,
+    "seed": "0x50555A5A"
+  },
+  "interaction": {
+    "minimumZoom": 0.15,
+    "maximumZoom": 6.0,
+    "magnetRadiusRatio": 0.25,
+    "connectionRadiusRatio": 0.28,
+    "maximumMagneticPull": 0.65,
+    "zoomStep": 1.15
+  },
+  "appearance": {
+    "background": "#20242b",
+    "selection": "#ffc107",
+    "marqueeFill": "#784696ff",
+    "marqueeBorder": "#ff64b4ff",
+    "selectionBorderWidth": 3.0,
+    "marqueeBorderWidth": 1.5
+  },
+  "window": {
+    "title": "Puzzle Canvas",
+    "width": 1280,
+    "height": 800
+  }
+}

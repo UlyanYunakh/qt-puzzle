@@ -1,4 +1,5 @@
 #include "Items/PuzzleCanvas/puzzlecanvas.h"
+#include "Config/puzzleconfig.h"
 
 #include <QGuiApplication>
 #include <QQuickWindow>
@@ -7,12 +8,15 @@ int main(int argc, char* argv[])
 {
     QGuiApplication application(argc, argv);
 
-    QQuickWindow window;
-    window.setTitle(QStringLiteral("Puzzle Canvas"));
-    window.setColor(QColor(QStringLiteral("#20242b")));
-    window.resize(1280, 800);
+    const PuzzleConfig config = PuzzleConfigLoader::load(
+        QStringLiteral(":/config/puzzle-config.json"));
 
-    auto* canvas = new PuzzleCanvas(window.contentItem());
+    QQuickWindow window;
+    window.setTitle(config.window.title);
+    window.setColor(config.appearance.background);
+    window.resize(config.window.width, config.window.height);
+
+    auto* canvas = new PuzzleCanvas(config, window.contentItem());
     canvas->setParentItem(window.contentItem());
     canvas->setSize(window.size());
 

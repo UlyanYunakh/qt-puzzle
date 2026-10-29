@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(Puzzle VERSION 0.1 LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
@@ -12,8 +14,12 @@ find_package(Qt6 6.12 REQUIRED COMPONENTS Quick)
 
 set(PROJECT_SOURCES
         main.cpp
+        src/Config/puzzleconfig.cpp
+        src/Config/puzzleconfig.h
         src/Items/PuzzleCanvas/puzzlecanvas.cpp
         src/Items/PuzzleCanvas/puzzlecanvas.h
+        src/PuzzleLogic/puzzlelogic.cpp
+        src/PuzzleLogic/puzzlelogic.h
         src/PuzzleGeometry/puzzlegeometrygenerator.cpp
         src/PuzzleGeometry/puzzlegeometrygenerator.h
         src/PuzzleGeometry/puzzleshapeloader.cpp
@@ -44,6 +50,16 @@ qt_add_resources(Puzzle "puzzle_assets"
 qt_add_resources(Puzzle "puzzle_shapes"
         PREFIX "/puzzle-shapes"
         FILES src/PuzzleShapes/classic.json
+)
+
+set_source_files_properties(
+        src/Config/puzzle-config.json
+        PROPERTIES QT_RESOURCE_ALIAS puzzle-config.json
+)
+
+qt_add_resources(Puzzle "puzzle_config"
+        PREFIX "/config"
+        FILES src/Config/puzzle-config.json
 )
 
 target_link_libraries(Puzzle PRIVATE Qt6::Quick)
@@ -91,3 +107,13 @@ install(TARGETS Puzzle
 )
 
 qt_finalize_executable(Puzzle)
+
+if (BUILD_TESTING)
+    add_executable(PuzzleLogicTests
+            tests/puzzlelogic_tests.cpp
+            src/PuzzleLogic/puzzlelogic.cpp
+            src/PuzzleLogic/puzzlelogic.h
+    )
+    target_include_directories(PuzzleLogicTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_test(NAME PuzzleLogicTests COMMAND PuzzleLogicTests)
+endif ()
