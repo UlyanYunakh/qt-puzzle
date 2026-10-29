@@ -254,6 +254,7 @@ ApplicationWindow {
             property bool loadFailed: false
             property bool paused: false
             property bool completed: false
+            property bool showingOriginal: false
             property int elapsedSeconds: 0
 
             function formattedTime() {
@@ -331,10 +332,116 @@ ApplicationWindow {
                     }
                     Item { Layout.fillWidth: true }
                     Button {
+                        text: game.showingOriginal ? qsTr("Hide image") : qsTr("Original image")
+                        enabled: !game.loadFailed
+                        onClicked: game.showingOriginal = !game.showingOriginal
+                    }
+                    Button {
                         text: qsTr("Pause")
                         enabled: !game.loadFailed
                         onClicked: game.openPauseMenu()
                     }
+                }
+            }
+
+            Rectangle {
+                id: originalPreview
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.margins: 18
+                width: Math.min(280, parent.width * 0.25)
+                height: width * 0.66
+                radius: 8
+                color: "#e61d222b"
+                border.color: "#9aa4b2"
+                border.width: 1
+                clip: true
+                visible: game.showingOriginal && !game.paused
+                z: 30
+
+                Image {
+                    id: originalThumbnail
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    source: canvas.sourceImage
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                    cache: true
+
+                    readonly property real paintedLeft: (width - paintedWidth) / 2
+                    readonly property real paintedTop: (height - paintedHeight) / 2
+                }
+
+                MouseArea {
+                    id: previewHover
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    hoverEnabled: true
+                    acceptedButtons: Qt.AllButtons
+                }
+            }
+
+            Rectangle {
+                id: originalMagnifier
+                anchors.left: originalPreview.left
+                anchors.bottom: originalPreview.top
+                anchors.bottomMargin: 12
+                width: Math.min(360, parent.width * 0.34)
+                height: width * 0.72
+                radius: 10
+                color: "#1d222b"
+                border.color: "#c9d1d9"
+                border.width: 2
+                clip: true
+                z: 31
+
+                readonly property bool overPaintedImage:
+                    previewHover.mouseX >= originalThumbnail.paintedLeft
+                    && previewHover.mouseX <= originalThumbnail.paintedLeft
+                                               + originalThumbnail.paintedWidth
+                    && previewHover.mouseY >= originalThumbnail.paintedTop
+                    && previewHover.mouseY <= originalThumbnail.paintedTop
+                                               + originalThumbnail.paintedHeight
+                readonly property real normalizedX: Math.max(0, Math.min(1,
+                    (previewHover.mouseX - originalThumbnail.paintedLeft)
+                    / Math.max(1, originalThumbnail.paintedWidth)))
+                readonly property real normalizedY: Math.max(0, Math.min(1,
+                    (previewHover.mouseY - originalThumbnail.paintedTop)
+                    / Math.max(1, originalThumbnail.paintedHeight)))
+                readonly property real magnification: Math.max(
+                    3.0,
+                    width / Math.max(1, originalThumbnail.paintedWidth),
+                    height / Math.max(1, originalThumbnail.paintedHeight))
+
+                visible: originalPreview.visible
+                         && previewHover.containsMouse
+                         && overPaintedImage
+
+                Image {
+                    width: Math.max(1, originalThumbnail.paintedWidth
+                                       * originalMagnifier.magnification)
+                    height: Math.max(1, originalThumbnail.paintedHeight
+                                        * originalMagnifier.magnification)
+                    x: Math.max(originalMagnifier.width - width,
+                                Math.min(0, originalMagnifier.width / 2
+                                            - originalMagnifier.normalizedX * width))
+                    y: Math.max(originalMagnifier.height - height,
+                                Math.min(0, originalMagnifier.height / 2
+                                            - originalMagnifier.normalizedY * height))
+                    source: canvas.sourceImage
+                    fillMode: Image.Stretch
+                    asynchronous: true
+                    cache: true
+                }
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 6
+                    height: 6
+                    radius: 3
+                    color: "transparent"
+                    border.color: "#ffffff"
+                    border.width: 1
                 }
             }
 

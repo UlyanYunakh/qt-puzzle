@@ -26,6 +26,7 @@ class PuzzleCanvas : public QQuickItem
     Q_OBJECT
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor
         NOTIFY backgroundColorChanged)
+    Q_PROPERTY(QUrl sourceImage READ sourceImage NOTIFY sourceImageChanged)
 
 public:
     /// Creates a canvas and loads the built-in test puzzle image.
@@ -43,6 +44,9 @@ public:
     /// Returns the piece-size-aware upper zoom limit for the current puzzle.
     [[nodiscard]] qreal maximumZoom() const;
 
+    /// Returns the image URL used by the current puzzle.
+    [[nodiscard]] QUrl sourceImage() const;
+
     /// Returns the settings used to distribute pieces before play begins.
     [[nodiscard]] const PuzzleInitialLayoutConfig& initialLayoutConfig() const;
 
@@ -57,6 +61,7 @@ public:
 
 signals:
     void backgroundColorChanged();
+    void sourceImageChanged();
 
     /// Emitted once after a user finishes moving one piece or a selected group.
     void piecesPlaced(const QList<int>& pieceIds, bool snapped);
@@ -176,6 +181,7 @@ private:
 
     PuzzleConfig m_config;
     QImage m_image;
+    QUrl m_sourceImageUrl;
     QColor m_backgroundColor;
     PuzzleShapeSet m_shapeSet;
     PuzzleLogic m_logic;

@@ -35,9 +35,12 @@ struct PuzzleInteractionConfig
 struct PuzzleAppearanceConfig
 {
     QColor background = QColor(QStringLiteral("#20242b"));
+    QColor pieceShadow = QColor(QStringLiteral("#101318"));
     QColor selection = QColor(255, 193, 7, 255);
     QColor marqueeFill = QColor(70, 150, 255, 120);
     QColor marqueeBorder = QColor(100, 180, 255, 255);
+    double pieceShadowOffsetX = 3.0;
+    double pieceShadowOffsetY = 5.0;
     double selectionBorderWidth = 3.0;
     double marqueeBorderWidth = 1.5;
 };

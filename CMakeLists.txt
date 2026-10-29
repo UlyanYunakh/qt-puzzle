@@ -39,7 +39,7 @@ qt_add_qml_module(Puzzle
 )
 
 set_source_files_properties(
-        src/DefaultPuzzles/test-puzzle-by-daniel-leone.jpg
+        src/DefaultPuzzles/pexels-andy-lee-222330306-35678159.jpg
         PROPERTIES QT_RESOURCE_ALIAS test-puzzle.jpg
 )
 
@@ -50,7 +50,7 @@ set_source_files_properties(
 
 qt_add_resources(Puzzle "puzzle_assets"
         PREFIX "/assets"
-        FILES src/DefaultPuzzles/test-puzzle-by-daniel-leone.jpg
+        FILES src/DefaultPuzzles/pexels-andy-lee-222330306-35678159.jpg
 )
 
 qt_add_resources(Puzzle "puzzle_shapes"
@@ -141,7 +141,7 @@ if (BUILD_TESTING)
     target_link_libraries(PuzzleCanvasTests PRIVATE Qt6::Quick)
     qt_add_resources(PuzzleCanvasTests "test_puzzle_assets"
             PREFIX "/assets"
-            FILES src/DefaultPuzzles/test-puzzle-by-daniel-leone.jpg
+            FILES src/DefaultPuzzles/pexels-andy-lee-222330306-35678159.jpg
     )
     qt_add_resources(PuzzleCanvasTests "test_puzzle_shapes"
             PREFIX "/puzzle-shapes"

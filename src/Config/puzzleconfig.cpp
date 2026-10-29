@@ -106,12 +106,20 @@ PuzzleConfig PuzzleConfigLoader::load(const QString& resourcePath)
     const QJsonObject appearance = root.value(QStringLiteral("appearance")).toObject();
     config.appearance.background = colorValue(appearance, QStringLiteral("background"),
                                               config.appearance.background);
+    config.appearance.pieceShadow = colorValue(appearance, QStringLiteral("pieceShadow"),
+                                               config.appearance.pieceShadow);
     config.appearance.selection = colorValue(appearance, QStringLiteral("selection"),
                                              config.appearance.selection);
     config.appearance.marqueeFill = colorValue(appearance, QStringLiteral("marqueeFill"),
                                                config.appearance.marqueeFill);
     config.appearance.marqueeBorder = colorValue(appearance, QStringLiteral("marqueeBorder"),
                                                  config.appearance.marqueeBorder);
+    config.appearance.pieceShadowOffsetX = appearance.value(
+                                                         QStringLiteral("pieceShadowOffsetX"))
+                                                     .toDouble(config.appearance.pieceShadowOffsetX);
+    config.appearance.pieceShadowOffsetY = appearance.value(
+                                                         QStringLiteral("pieceShadowOffsetY"))
+                                                     .toDouble(config.appearance.pieceShadowOffsetY);
     config.appearance.selectionBorderWidth = appearance.value(
                                                            QStringLiteral("selectionBorderWidth"))
                                                        .toDouble(config.appearance.selectionBorderWidth);
@@ -144,6 +152,9 @@ PuzzleConfig PuzzleConfigLoader::load(const QString& resourcePath)
         || config.initialLayout.centerClearHeightRatio >= 1.0
         || config.initialLayout.naturalJitter < 0.0
         || config.initialLayout.naturalJitter > 1.0
+        || config.appearance.pieceShadow.alpha() != 255
+        || config.appearance.pieceShadowOffsetX < 0.0
+        || config.appearance.pieceShadowOffsetY < 0.0
         || config.appearance.selectionBorderWidth <= 0.0
         || config.appearance.marqueeBorderWidth <= 0.0
         || config.window.title.isEmpty() || config.window.width < 1 || config.window.height < 1)

@@ -36,6 +36,8 @@ namespace
         QSGTexture* texture = nullptr;
         QSGGeometryNode* backgroundNode = nullptr;
         QSGTransformNode* contentNode = nullptr;
+        QSGTransformNode* shadowTransformNode = nullptr;
+        QSGGeometryNode* shadowNode = nullptr;
         QSGGeometryNode* pieceNode = nullptr;
         QSGGeometryNode* selectionNode = nullptr;
         QSGGeometryNode* marqueeFillNode = nullptr;
@@ -183,6 +185,7 @@ PuzzleCanvas::PuzzleCanvas(const PuzzleConfig& config, QQuickItem* parent)
       , m_shapeSet(PuzzleShapeLoader::load(m_config.shapeResource))
 {
     m_maximumZoom = m_config.interaction.maximumZoom;
+    m_sourceImageUrl = QUrl(QStringLiteral("qrc") + m_config.imageResource);
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton);
     setKeepMouseGrab(true);
@@ -192,6 +195,11 @@ PuzzleCanvas::PuzzleCanvas(const PuzzleConfig& config, QQuickItem* parent)
 qreal PuzzleCanvas::maximumZoom() const
 {
     return m_maximumZoom;
+}
+
+QUrl PuzzleCanvas::sourceImage() const
+{
+    return m_sourceImageUrl;
 }
 
 QColor PuzzleCanvas::backgroundColor() const
@@ -244,6 +252,15 @@ bool PuzzleCanvas::startPuzzle(const QUrl& imageUrl, int columns, int rows)
     m_config.columns = columns;
     m_config.rows = rows;
     m_image = image;
+    const QUrl nextSource = imageUrl.isEmpty()
+                                ? QUrl(QStringLiteral("qrc")
+                                    + m_config.imageResource)
+                                : imageUrl;
+    if (m_sourceImageUrl != nextSource)
+    {
+        m_sourceImageUrl = nextSource;
+        emit sourceImageChanged();
+    }
     resetPieces();
     initializePieces();
     // A newly constructed QML item may not have received its final size yet;
@@ -1057,6 +1074,13 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         root->texture->setFiltering(QSGTexture::Linear);
         root->texture->setMipmapFiltering(QSGTexture::Linear);
 
+        // One opaque batched silhouette keeps shadows inexpensive even for very large puzzles.
+        // It is composited before all pieces so shadows never darken the image itself.
+        root->shadowTransformNode = new QSGTransformNode;
+        root->contentNode->appendChildNode(root->shadowTransformNode);
+        root->shadowNode = createFlatNode(m_config.appearance.pieceShadow);
+        root->shadowTransformNode->appendChildNode(root->shadowNode);
+
         root->pieceNode = new QSGGeometryNode;
         auto* material = new QSGTextureMaterial;
         material->setTexture(root->texture);
@@ -1088,6 +1112,13 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
     transform.scale(float(m_zoom));
     root->contentNode->setMatrix(transform);
 
+    // Express the configured screen-space drop in world coordinates so zoom does not
+    // make the shadow appear farther away from its piece.
+    QMatrix4x4 shadowTransform;
+    shadowTransform.translate(float(m_config.appearance.pieceShadowOffsetX / m_zoom),
+                              float(m_config.appearance.pieceShadowOffsetY / m_zoom));
+    root->shadowTransformNode->setMatrix(shadowTransform);
+
     if (root->geometryRevision != m_geometryRevision)
     {
         // All pieces remain in one batch. Triangles in this opaque geometry have equal depth,
@@ -1116,6 +1147,10 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
         auto* vertices = geometry->vertexDataAsTexturedPoint2D();
         auto* indices = static_cast<quint32*>(geometry->indexData());
+        QVector<QPointF> shadowPoints;
+        QVector<quint32> shadowIndices;
+        shadowPoints.reserve(vertexCount);
+        shadowIndices.resize(indexCount);
         int vertexOffset = 0;
         int indexOffset = 0;
         for (int drawIndex = 0; drawIndex < m_drawOrder.size(); ++drawIndex)
@@ -1127,17 +1162,22 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
                 const PuzzleMeshVertex& source = piece.vertices.at(i);
                 const QPointF position = piece.position
                     + rotatedLocalPoint(piece, source.localPosition);
+                shadowPoints.push_back(position);
                 vertices[vertexOffset + i].set(float(position.x()), float(position.y()),
                                                float(source.textureUv.x()),
                                                float(source.textureUv.y()));
             }
             for (int i = 0; i < piece.indices.size(); ++i)
+            {
                 indices[indexOffset + i] = quint32(vertexOffset) + piece.indices.at(i);
+                shadowIndices[indexOffset + i] = indices[indexOffset + i];
+            }
             vertexOffset += piece.vertices.size();
             indexOffset += piece.indices.size();
         }
         geometry->setDrawingMode(QSGGeometry::DrawTriangles);
         root->pieceNode->markDirty(QSGNode::DirtyGeometry);
+        setColoredTriangles(root->shadowNode, shadowPoints, shadowIndices);
         root->geometryRevision = m_geometryRevision;
     }
 

@@ -31,6 +31,9 @@
   },
   "appearance": {
     "background": "#20242b",
+    "pieceShadow": "#101318",
+    "pieceShadowOffsetX": 3.0,
+    "pieceShadowOffsetY": 5.0,
     "selection": "#ffc107",
     "marqueeFill": "#784696ff",
     "marqueeBorder": "#ff64b4ff",
