@@ -52,6 +52,13 @@ struct PuzzleWindowConfig
     int height = 800;
 };
 
+struct PuzzleAudioConfig
+{
+    QString pieceDropResource = QStringLiteral(":/sfx/piece-drop.wav");
+    QString piecePlacedResource = QStringLiteral(":/sfx/piece-placed.wav");
+    QString buttonClickResource = QStringLiteral(":/sfx/button-click-v2.wav");
+};
+
 struct PuzzleConfig
 {
     int columns = 12;
@@ -63,6 +70,7 @@ struct PuzzleConfig
     PuzzleInteractionConfig interaction;
     PuzzleAppearanceConfig appearance;
     PuzzleWindowConfig window;
+    PuzzleAudioConfig audio;
 };
 
 class PuzzleConfigLoader

@@ -4,6 +4,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QFileInfo>
+#include <QUrl>
 
 #include <stdexcept>
 
@@ -30,6 +32,23 @@ namespace
     {
         const QColor color(object.value(key).toString());
         return color.isValid() ? color : fallback;
+    }
+
+    bool soundSourceExists(const QString& source)
+    {
+        if (source.startsWith(QStringLiteral(":/")))
+            return QFile::exists(source);
+
+        const QFileInfo fileInfo(source);
+        if (fileInfo.isAbsolute())
+            return fileInfo.exists();
+
+        const QUrl url(source);
+        if (url.scheme() == QStringLiteral("qrc"))
+            return QFile::exists(QStringLiteral(":") + url.path());
+        if (url.isLocalFile())
+            return QFile::exists(url.toLocalFile());
+        return url.scheme().isEmpty() && QFile::exists(source);
     }
 }
 
@@ -131,6 +150,25 @@ PuzzleConfig PuzzleConfigLoader::load(const QString& resourcePath)
     config.window.title = window.value(QStringLiteral("title")).toString(config.window.title);
     config.window.width = window.value(QStringLiteral("width")).toInt(config.window.width);
     config.window.height = window.value(QStringLiteral("height")).toInt(config.window.height);
+
+    const QJsonObject audio = root.value(QStringLiteral("audio")).toObject();
+    config.audio.pieceDropResource = audio.value(QStringLiteral("pieceDropResource"))
+                                          .toString(config.audio.pieceDropResource);
+    config.audio.piecePlacedResource = audio.value(QStringLiteral("piecePlacedResource"))
+                                            .toString(config.audio.piecePlacedResource);
+    config.audio.buttonClickResource = audio.value(QStringLiteral("buttonClickResource"))
+                                            .toString(config.audio.buttonClickResource);
+
+    for (const QString& soundSource : {
+             config.audio.pieceDropResource,
+             config.audio.piecePlacedResource,
+             config.audio.buttonClickResource
+         })
+    {
+        if (!soundSourceExists(soundSource))
+            throw std::runtime_error(QStringLiteral("Configured sound does not exist: %1")
+                                     .arg(soundSource).toStdString());
+    }
 
     if (schemaVersion != 1 || config.columns < 1 || config.rows < 1
         || config.imageResource.isEmpty()

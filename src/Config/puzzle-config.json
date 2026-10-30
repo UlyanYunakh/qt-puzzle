@@ -40,6 +40,11 @@
     "selectionBorderWidth": 3.0,
     "marqueeBorderWidth": 1.5
   },
+  "audio": {
+    "pieceDropResource": ":/sfx/piece-drop.wav",
+    "piecePlacedResource": ":/sfx/piece-placed.wav",
+    "buttonClickResource": ":/sfx/button-click-v2.wav"
+  },
   "window": {
     "title": "Puzzle Canvas",
     "width": 1280,

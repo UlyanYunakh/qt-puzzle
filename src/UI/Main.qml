@@ -12,13 +12,50 @@ ApplicationWindow {
     minimumWidth: 800
     minimumHeight: 560
     title: initialWindowTitle
-    color: appBackgroundColor
+    color: applicationSettings.backgroundColor
 
     readonly property color panelColor: "#cc292f39"
     readonly property color primaryColor: "#4f9cff"
     readonly property color textColor: "#f2f5f8"
 
-    component MenuButton: Button {
+    component SoundButton: Button {
+        onClicked: puzzleSoundSystem.playButtonClick()
+    }
+
+    component ActionButton: SoundButton {
+        id: actionControl
+        implicitWidth: 130
+        implicitHeight: 42
+        leftPadding: 18
+        rightPadding: 18
+        font.pixelSize: 16
+        font.weight: Font.DemiBold
+
+        contentItem: Text {
+            text: actionControl.text
+            font: actionControl.font
+            color: actionControl.enabled ? window.textColor : "#73808d"
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            radius: 8
+            color: !actionControl.enabled ? "#252b34"
+                   : actionControl.down ? "#2f6fbd"
+                   : actionControl.highlighted ? window.primaryColor
+                   : actionControl.hovered ? "#3a4655" : "#303945"
+            border.width: 1
+            border.color: actionControl.highlighted ? "#80b9ff"
+                          : actionControl.hovered ? "#708297" : "#4a5665"
+            opacity: actionControl.enabled ? 1.0 : 0.7
+
+            Behavior on color { ColorAnimation { duration: 90 } }
+        }
+    }
+
+    component MenuButton: SoundButton {
         Layout.preferredWidth: 260
         Layout.preferredHeight: 52
         font.pixelSize: 18
@@ -34,7 +71,7 @@ ApplicationWindow {
         id: mainMenu
 
         Rectangle {
-            color: appBackgroundColor
+            color: applicationSettings.backgroundColor
 
             ColumnLayout {
                 anchors.centerIn: parent
@@ -70,7 +107,7 @@ ApplicationWindow {
 
         Rectangle {
             id: startPage
-            color: appBackgroundColor
+            color: applicationSettings.backgroundColor
             property url selectedImage: ""
 
             FileDialog {
@@ -108,7 +145,8 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
 
-                        Button {
+                        ActionButton {
+                            Layout.preferredWidth: 170
                             text: qsTr("Choose image…")
                             onClicked: imageDialog.open()
                         }
@@ -183,12 +221,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.topMargin: 8
 
-                        Button {
+                        ActionButton {
                             text: qsTr("Back")
                             onClicked: stack.pop()
                         }
                         Item { Layout.fillWidth: true }
-                        Button {
+                        ActionButton {
                             text: qsTr("Start puzzle")
                             highlighted: true
                             enabled: pieceCountBox.currentIndex !== 4
@@ -215,28 +253,110 @@ ApplicationWindow {
         id: settingsMenu
 
         Rectangle {
-            color: appBackgroundColor
+            color: applicationSettings.backgroundColor
 
-            ColumnLayout {
+            ColorDialog {
+                id: backgroundColorDialog
+                title: qsTr("Choose background color")
+                selectedColor: applicationSettings.backgroundColor
+                onAccepted: applicationSettings.backgroundColor = selectedColor
+            }
+
+            Rectangle {
                 anchors.centerIn: parent
-                spacing: 22
+                width: Math.min(parent.width - 48, 520)
+                height: Math.min(parent.height - 32, 500)
+                radius: 16
+                color: window.panelColor
 
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("Settings")
-                    color: window.textColor
-                    font.pixelSize: 38
-                    font.bold: true
-                }
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("No settings yet")
-                    color: "#aeb8c4"
-                    font.pixelSize: 17
-                }
-                MenuButton {
-                    text: qsTr("Back")
-                    onClicked: stack.pop()
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 32
+                    spacing: 18
+
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: qsTr("Settings")
+                        color: window.textColor
+                        font.pixelSize: 38
+                        font.bold: true
+                    }
+
+                    Label {
+                        text: qsTr("Gameplay effects volume: %1%").arg(
+                                  Math.round(gameplayVolume.value * 100))
+                        color: window.textColor
+                        font.pixelSize: 17
+                    }
+                    Slider {
+                        id: gameplayVolume
+                        Layout.fillWidth: true
+                        from: 0
+                        to: 1
+                        stepSize: 0.01
+                        value: puzzleSoundSystem.gameplayEffectsVolume
+                        onMoved: puzzleSoundSystem.gameplayEffectsVolume = value
+                    }
+
+                    Label {
+                        text: qsTr("System sounds volume: %1%").arg(
+                                  Math.round(systemVolume.value * 100))
+                        color: window.textColor
+                        font.pixelSize: 17
+                    }
+                    Slider {
+                        id: systemVolume
+                        Layout.fillWidth: true
+                        from: 0
+                        to: 1
+                        stepSize: 0.01
+                        value: puzzleSoundSystem.systemSoundsVolume
+                        onMoved: puzzleSoundSystem.systemSoundsVolume = value
+                    }
+
+                    Label {
+                        text: qsTr("Background color")
+                        color: window.textColor
+                        font.pixelSize: 17
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Rectangle {
+                            width: 42
+                            height: 30
+                            radius: 5
+                            color: applicationSettings.backgroundColor
+                            border.color: "#c8d0da"
+                        }
+                        ActionButton {
+                            Layout.fillWidth: true
+                            text: qsTr("Choose color")
+                            onClicked: {
+                                backgroundColorDialog.selectedColor =
+                                        applicationSettings.backgroundColor
+                                backgroundColorDialog.open()
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillHeight: true }
+
+                    ActionButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.preferredWidth: 260
+                        text: qsTr("Reset all settings")
+                        onClicked: {
+                            puzzleSoundSystem.resetToDefaults()
+                            applicationSettings.resetToDefaults()
+                        }
+                    }
+
+                    MenuButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: qsTr("Back")
+                        onClicked: stack.pop()
+                    }
                 }
             }
         }
@@ -289,6 +409,7 @@ ApplicationWindow {
             PuzzleCanvas {
                 id: canvas
                 anchors.fill: parent
+                backgroundColor: applicationSettings.backgroundColor
                 enabled: !game.paused && !game.loadFailed
 
                 Component.onCompleted: {
@@ -306,6 +427,10 @@ ApplicationWindow {
                 onPuzzleCompleted: {
                     game.completed = true
                     gameTimer.stop()
+                }
+
+                onPiecesPlaced: function(pieceIds, snapped) {
+                    puzzleSoundSystem.playPieceRelease(snapped)
                 }
             }
 
@@ -331,12 +456,13 @@ ApplicationWindow {
                         font.bold: true
                     }
                     Item { Layout.fillWidth: true }
-                    Button {
+                    ActionButton {
+                        Layout.preferredWidth: 170
                         text: game.showingOriginal ? qsTr("Hide image") : qsTr("Original image")
                         enabled: !game.loadFailed
                         onClicked: game.showingOriginal = !game.showingOriginal
                     }
-                    Button {
+                    ActionButton {
                         text: qsTr("Pause")
                         enabled: !game.loadFailed
                         onClicked: game.openPauseMenu()
@@ -459,7 +585,7 @@ ApplicationWindow {
                 Rectangle {
                     anchors.centerIn: parent
                     width: 380
-                    height: 280
+                    height: 350
                     radius: 16
                     color: window.panelColor
 
@@ -478,6 +604,10 @@ ApplicationWindow {
                         MenuButton {
                             text: qsTr("Continue")
                             onClicked: game.continueGame()
+                        }
+                        MenuButton {
+                            text: qsTr("Settings")
+                            onClicked: stack.push(settingsMenu)
                         }
                         MenuButton {
                             text: qsTr("Exit to menu")
@@ -505,7 +635,7 @@ ApplicationWindow {
                         color: window.textColor
                         wrapMode: Text.WordWrap
                     }
-                    Button {
+                    ActionButton {
                         Layout.alignment: Qt.AlignRight
                         text: qsTr("Back")
                         onClicked: stack.replace(startMenu)

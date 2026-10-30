@@ -10,10 +10,12 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2)
+find_package(Qt6 6.12 REQUIRED COMPONENTS Multimedia Quick QuickControls2)
 
 set(PROJECT_SOURCES
         main.cpp
+        src/Audio/puzzlesoundsystem.cpp
+        src/Audio/puzzlesoundsystem.h
         src/Config/puzzleconfig.cpp
         src/Config/puzzleconfig.h
         src/Items/PuzzleCanvas/puzzlecanvas.cpp
@@ -25,6 +27,8 @@ set(PROJECT_SOURCES
         src/PuzzleGeometry/puzzleshapeloader.cpp
         src/PuzzleGeometry/puzzleshapeloader.h
         src/PuzzleGeometry/puzzleshapeset.h
+        src/Settings/puzzleapplicationsettings.cpp
+        src/Settings/puzzleapplicationsettings.h
 )
 
 qt_add_executable(Puzzle
@@ -53,6 +57,24 @@ qt_add_resources(Puzzle "puzzle_assets"
         FILES src/DefaultPuzzles/pexels-andy-lee-222330306-35678159.jpg
 )
 
+set_source_files_properties(src/SFX/piece-drop.wav
+        PROPERTIES QT_RESOURCE_ALIAS piece-drop.wav)
+set_source_files_properties(src/SFX/piece-placed.wav
+        PROPERTIES QT_RESOURCE_ALIAS piece-placed.wav)
+set_source_files_properties(src/SFX/button-click.wav
+        PROPERTIES QT_RESOURCE_ALIAS button-click.wav)
+set_source_files_properties(src/SFX/button-click-v2.wav
+        PROPERTIES QT_RESOURCE_ALIAS button-click-v2.wav)
+
+qt_add_resources(Puzzle "puzzle_sounds"
+        PREFIX "/sfx"
+        FILES
+        src/SFX/piece-drop.wav
+        src/SFX/piece-placed.wav
+        src/SFX/button-click.wav
+        src/SFX/button-click-v2.wav
+)
+
 qt_add_resources(Puzzle "puzzle_shapes"
         PREFIX "/puzzle-shapes"
         FILES src/PuzzleShapes/classic.json
@@ -68,7 +90,7 @@ qt_add_resources(Puzzle "puzzle_config"
         FILES src/Config/puzzle-config.json
 )
 
-target_link_libraries(Puzzle PRIVATE Qt6::Quick Qt6::QuickControls2)
+target_link_libraries(Puzzle PRIVATE Qt6::Multimedia Qt6::Quick Qt6::QuickControls2)
 target_include_directories(Puzzle PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 # Keep the Windows build runnable without relying on a machine-wide PATH.
@@ -150,6 +172,14 @@ if (BUILD_TESTING)
     qt_add_resources(PuzzleCanvasTests "test_puzzle_config"
             PREFIX "/config"
             FILES src/Config/puzzle-config.json
+    )
+    qt_add_resources(PuzzleCanvasTests "test_puzzle_sounds"
+            PREFIX "/sfx"
+            FILES
+            src/SFX/piece-drop.wav
+            src/SFX/piece-placed.wav
+            src/SFX/button-click.wav
+            src/SFX/button-click-v2.wav
     )
     add_test(NAME PuzzleCanvasTests COMMAND PuzzleCanvasTests)
     set_tests_properties(PuzzleCanvasTests PROPERTIES
