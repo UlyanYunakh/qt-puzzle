@@ -14,6 +14,7 @@
 #include <QRectF>
 #include <QUrl>
 #include <QVector>
+#include <QVariantMap>
 
 #include <vector>
 
@@ -58,6 +59,12 @@ public:
 
     /// Chooses a near-target grid whose individual pieces are close to square.
     Q_INVOKABLE bool startPuzzleWithPieceCount(const QUrl& imageUrl, int pieceCount);
+
+    /// Serializes every gameplay transform and logical connection.
+    Q_INVOKABLE QVariantMap saveState() const;
+
+    /// Restores a state previously returned by saveState().
+    Q_INVOKABLE bool restoreState(const QVariantMap& state);
 
 signals:
     void backgroundColorChanged();

@@ -2,6 +2,7 @@
 #include "Audio/puzzlesoundsystem.h"
 #include "Config/puzzleconfig.h"
 #include "Settings/puzzleapplicationsettings.h"
+#include "SaveGame/puzzlesavegamesystem.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -22,10 +23,13 @@ int main(int argc, char* argv[])
     QQmlApplicationEngine engine;
     PuzzleSoundSystem soundSystem(config.audio);
     PuzzleApplicationSettings applicationSettings(config.appearance.background);
+    PuzzleSaveGameSystem saveGameSystem;
     engine.rootContext()->setContextProperty(QStringLiteral("puzzleSoundSystem"),
                                              &soundSystem);
     engine.rootContext()->setContextProperty(QStringLiteral("applicationSettings"),
                                              &applicationSettings);
+    engine.rootContext()->setContextProperty(QStringLiteral("saveGameSystem"),
+                                             &saveGameSystem);
     engine.rootContext()->setContextProperty(QStringLiteral("initialWindowWidth"),
                                              config.window.width);
     engine.rootContext()->setContextProperty(QStringLiteral("initialWindowHeight"),

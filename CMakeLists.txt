@@ -29,6 +29,8 @@ set(PROJECT_SOURCES
         src/PuzzleGeometry/puzzleshapeset.h
         src/Settings/puzzleapplicationsettings.cpp
         src/Settings/puzzleapplicationsettings.h
+        src/SaveGame/puzzlesavegamesystem.cpp
+        src/SaveGame/puzzlesavegamesystem.h
 )
 
 qt_add_executable(Puzzle

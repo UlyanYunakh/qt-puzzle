@@ -38,6 +38,8 @@ public:
 
     [[nodiscard]] std::vector<int> connectedComponent(int pieceId) const;
     [[nodiscard]] bool isComplete() const;
+    [[nodiscard]] std::vector<std::pair<int, int>> connections() const;
+    void restoreConnections(const std::vector<std::pair<int, int>>& connections);
 
     // Removes only connections that cross from the moving set to stationary
     // pieces. Internal connections remain intact, allowing a selected connected

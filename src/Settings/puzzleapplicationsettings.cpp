@@ -5,6 +5,7 @@
 namespace
 {
     constexpr auto backgroundColorKey = "appearance/backgroundColor";
+    constexpr auto autoSaveMinutesKey = "save/autoSaveMinutes";
 }
 
 PuzzleApplicationSettings::PuzzleApplicationSettings(const QColor& defaultBackgroundColor,
@@ -15,6 +16,23 @@ PuzzleApplicationSettings::PuzzleApplicationSettings(const QColor& defaultBackgr
     const QColor savedColor(QSettings().value(
         QString::fromLatin1(backgroundColorKey), defaultBackgroundColor).toString());
     m_backgroundColor = savedColor.isValid() ? savedColor : defaultBackgroundColor;
+    setAutoSaveMinutes(QSettings().value(QString::fromLatin1(autoSaveMinutesKey), 5).toInt());
+}
+
+int PuzzleApplicationSettings::autoSaveMinutes() const
+{
+    return m_autoSaveMinutes;
+}
+
+void PuzzleApplicationSettings::setAutoSaveMinutes(int minutes)
+{
+    if (minutes != 1 && minutes != 5 && minutes != 10)
+        minutes = 5;
+    if (m_autoSaveMinutes == minutes)
+        return;
+    m_autoSaveMinutes = minutes;
+    QSettings().setValue(QString::fromLatin1(autoSaveMinutesKey), minutes);
+    emit autoSaveMinutesChanged();
 }
 
 QColor PuzzleApplicationSettings::backgroundColor() const
@@ -35,4 +53,5 @@ void PuzzleApplicationSettings::setBackgroundColor(const QColor& color)
 void PuzzleApplicationSettings::resetToDefaults()
 {
     setBackgroundColor(m_defaultBackgroundColor);
+    setAutoSaveMinutes(5);
 }

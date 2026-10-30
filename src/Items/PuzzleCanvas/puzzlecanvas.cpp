@@ -15,6 +15,7 @@
 #include <QSGTransformNode>
 #include <QStyleHints>
 #include <QWheelEvent>
+#include <QVariantList>
 
 #include <algorithm>
 #include <cmath>
@@ -311,6 +312,92 @@ bool PuzzleCanvas::startPuzzleWithPieceCount(const QUrl& imageUrl, int pieceCoun
         }
     }
     return startPuzzle(imageUrl, bestColumns, bestRows);
+}
+
+QVariantMap PuzzleCanvas::saveState() const
+{
+    QVariantList pieces;
+    pieces.reserve(m_pieces.size());
+    for (const Piece& piece : m_pieces)
+    {
+        pieces.push_back(QVariantMap{
+            {QStringLiteral("x"), piece.position.x()},
+            {QStringLiteral("y"), piece.position.y()},
+            {QStringLiteral("quarterTurns"), piece.quarterTurns}
+        });
+    }
+
+    QVariantList connections;
+    for (const auto& [first, second] : m_logic.connections())
+        connections.push_back(QVariantList{first, second});
+
+    QVariantList drawOrder;
+    drawOrder.reserve(m_drawOrder.size());
+    for (const int id : m_drawOrder)
+        drawOrder.push_back(id);
+
+    return {
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("sourceImage"), m_sourceImageUrl.toString()},
+        {QStringLiteral("columns"), m_config.columns},
+        {QStringLiteral("rows"), m_config.rows},
+        {QStringLiteral("pieces"), pieces},
+        {QStringLiteral("connections"), connections},
+        {QStringLiteral("drawOrder"), drawOrder},
+        {QStringLiteral("panX"), m_pan.x()},
+        {QStringLiteral("panY"), m_pan.y()},
+        {QStringLiteral("zoom"), m_zoom}
+    };
+}
+
+bool PuzzleCanvas::restoreState(const QVariantMap& state)
+{
+    if (state.value(QStringLiteral("version")).toInt() != 1)
+        return false;
+    const int columns = state.value(QStringLiteral("columns")).toInt();
+    const int rows = state.value(QStringLiteral("rows")).toInt();
+    const QUrl source(state.value(QStringLiteral("sourceImage")).toString());
+    if (!startPuzzle(source, columns, rows))
+        return false;
+    initializePieces();
+
+    const QVariantList savedPieces = state.value(QStringLiteral("pieces")).toList();
+    if (savedPieces.size() != m_pieces.size())
+        return false;
+    for (int id = 0; id < m_pieces.size(); ++id)
+    {
+        const QVariantMap savedPiece = savedPieces.at(id).toMap();
+        Piece& piece = m_pieces[id];
+        piece.position = QPointF(savedPiece.value(QStringLiteral("x")).toDouble(),
+                                 savedPiece.value(QStringLiteral("y")).toDouble());
+        piece.quarterTurns = savedPiece.value(QStringLiteral("quarterTurns")).toInt();
+        piece.selected = false;
+        m_logic.setPiecePose(id, {
+                                 {piece.position.x(), piece.position.y()},
+                                 piece.quarterTurns
+                             });
+    }
+
+    std::vector<std::pair<int, int>> connections;
+    for (const QVariant& value : state.value(QStringLiteral("connections")).toList())
+    {
+        const QVariantList pair = value.toList();
+        if (pair.size() == 2)
+            connections.emplace_back(pair.at(0).toInt(), pair.at(1).toInt());
+    }
+    m_logic.restoreConnections(connections);
+
+    const QVariantList order = state.value(QStringLiteral("drawOrder")).toList();
+    if (order.size() == m_drawOrder.size())
+        for (int i = 0; i < order.size(); ++i)
+            m_drawOrder[i] = order.at(i).toInt();
+    m_pan = QPointF(state.value(QStringLiteral("panX")).toDouble(),
+                    state.value(QStringLiteral("panY")).toDouble());
+    m_zoom = std::clamp(state.value(QStringLiteral("zoom"), 1.0).toDouble(),
+                        m_config.interaction.minimumZoom, m_maximumZoom);
+    m_puzzleCompleted = m_logic.isComplete();
+    markGeometryDirty();
+    return true;
 }
 
 void PuzzleCanvas::resetPieces()

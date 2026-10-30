@@ -91,6 +91,10 @@ ApplicationWindow {
                     onClicked: stack.push(startMenu)
                 }
                 MenuButton {
+                    text: qsTr("Load game")
+                    onClicked: stack.push(loadMenu)
+                }
+                MenuButton {
                     text: qsTr("Setting")
                     onClicked: stack.push(settingsMenu)
                 }
@@ -109,6 +113,7 @@ ApplicationWindow {
             id: startPage
             color: applicationSettings.backgroundColor
             property url selectedImage: ""
+            property int selectedSaveSlot: 1
 
             FileDialog {
                 id: imageDialog
@@ -208,6 +213,20 @@ ApplicationWindow {
                         }
                     }
 
+                    Label {
+                        text: qsTr("Save slot")
+                        color: window.textColor
+                        font.pixelSize: 17
+                    }
+                    ComboBox {
+                        Layout.fillWidth: true
+                        model: [qsTr("Slot 1"), qsTr("Slot 2"), qsTr("Slot 3"),
+                            qsTr("Slot 4"), qsTr("Slot 5"), qsTr("Slot 6"),
+                            qsTr("Slot 7"), qsTr("Slot 8"), qsTr("Slot 9"),
+                            qsTr("Slot 10")]
+                        onCurrentIndexChanged: startPage.selectedSaveSlot = currentIndex + 1
+                    }
+
                     Item { Layout.fillHeight: true }
 
                     Label {
@@ -239,11 +258,105 @@ ApplicationWindow {
                                                          ? predefined[pieceCountBox.currentIndex]
                                                          : 0,
                                     requestedColumns: columnCount.value,
-                                    requestedRows: rowCount.value
+                                    requestedRows: rowCount.value,
+                                    saveSlot: startPage.selectedSaveSlot,
+                                    loadExisting: false
                                 })
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: loadMenu
+
+        Rectangle {
+            color: applicationSettings.backgroundColor
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 28
+                spacing: 16
+
+                Label {
+                    text: qsTr("Load game")
+                    color: window.textColor
+                    font.pixelSize: 36
+                    font.bold: true
+                }
+
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+
+                    Column {
+                        width: Math.max(760, parent.width)
+                        spacing: 12
+
+                        Repeater {
+                            model: 10
+                            delegate: Rectangle {
+                                required property int index
+                                property var slotData: saveGameSystem.slotInfo(index + 1)
+                                width: parent.width
+                                height: 150
+                                radius: 10
+                                color: window.panelColor
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 14
+
+                                    Label {
+                                        Layout.preferredWidth: 68
+                                        text: qsTr("Slot %1").arg(index + 1)
+                                        color: window.textColor
+                                        font.bold: true
+                                    }
+                                    Image {
+                                        Layout.preferredWidth: 170
+                                        Layout.fillHeight: true
+                                        source: slotData.exists ? slotData.originalImage : ""
+                                        fillMode: Image.PreserveAspectFit
+                                        asynchronous: true
+                                    }
+                                    Image {
+                                        Layout.preferredWidth: 220
+                                        Layout.fillHeight: true
+                                        source: slotData.exists ? slotData.statePreview : ""
+                                        fillMode: Image.PreserveAspectFit
+                                        asynchronous: true
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: slotData.exists
+                                              ? qsTr("Saved %1").arg(slotData.savedAt)
+                                              : qsTr("Empty")
+                                        color: slotData.exists ? "#c8d0da" : "#73808d"
+                                        wrapMode: Text.WordWrap
+                                    }
+                                    ActionButton {
+                                        text: qsTr("Load")
+                                        enabled: slotData.exists
+                                        onClicked: stack.replace(gamePage, {
+                                            saveSlot: index + 1,
+                                            loadExisting: true
+                                        })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ActionButton {
+                    text: qsTr("Back")
+                    onClicked: stack.pop()
                 }
             }
         }
@@ -265,14 +378,14 @@ ApplicationWindow {
             Rectangle {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 520)
-                height: Math.min(parent.height - 32, 500)
+                height: Math.min(parent.height - 24, 560)
                 radius: 16
                 color: window.panelColor
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 32
-                    spacing: 18
+                    anchors.margins: 24
+                    spacing: 10
 
                     Label {
                         Layout.alignment: Qt.AlignHCenter
@@ -315,6 +428,23 @@ ApplicationWindow {
                     }
 
                     Label {
+                        text: qsTr("Autosave interval")
+                        color: window.textColor
+                        font.pixelSize: 17
+                    }
+                    ComboBox {
+                        id: autoSaveInterval
+                        Layout.fillWidth: true
+                        model: [qsTr("Every minute"), qsTr("Every 5 minutes"),
+                            qsTr("Every 10 minutes")]
+                        Component.onCompleted: currentIndex =
+                            applicationSettings.autoSaveMinutes === 1 ? 0
+                            : applicationSettings.autoSaveMinutes === 10 ? 2 : 1
+                        onActivated: applicationSettings.autoSaveMinutes =
+                            currentIndex === 0 ? 1 : currentIndex === 2 ? 10 : 5
+                    }
+
+                    Label {
                         text: qsTr("Background color")
                         color: window.textColor
                         font.pixelSize: 17
@@ -349,6 +479,7 @@ ApplicationWindow {
                         onClicked: {
                             puzzleSoundSystem.resetToDefaults()
                             applicationSettings.resetToDefaults()
+                            autoSaveInterval.currentIndex = 1
                         }
                     }
 
@@ -371,11 +502,14 @@ ApplicationWindow {
             property int requestedPieceCount
             property int requestedColumns
             property int requestedRows
+            property int saveSlot: 1
+            property bool loadExisting: false
             property bool loadFailed: false
             property bool paused: false
             property bool completed: false
             property bool showingOriginal: false
             property int elapsedSeconds: 0
+            property string saveStatus: ""
 
             function formattedTime() {
                 const hours = Math.floor(elapsedSeconds / 3600)
@@ -398,12 +532,44 @@ ApplicationWindow {
                     gameTimer.start()
             }
 
+            function saveCurrentGame(automatic) {
+                if (loadFailed)
+                    return
+                saveStatus = automatic ? qsTr("Autosaving…") : qsTr("Saving…")
+                const started = canvas.grabToImage(function(result) {
+                    result.saveToFile(saveGameSystem.previewFilePath(saveSlot))
+                    const saved = saveGameSystem.save(saveSlot, canvas.saveState(),
+                                                      canvas.sourceImage, elapsedSeconds)
+                    saveStatus = saved
+                                 ? (automatic ? qsTr("Autosaved") : qsTr("Game saved"))
+                                 : qsTr("Save failed")
+                    saveIndicatorTimer.restart()
+                })
+                if (!started) {
+                    saveStatus = qsTr("Save failed")
+                    saveIndicatorTimer.restart()
+                }
+            }
+
             Timer {
                 id: gameTimer
                 interval: 1000
                 repeat: true
                 running: false
                 onTriggered: game.elapsedSeconds++
+            }
+
+            Timer {
+                interval: applicationSettings.autoSaveMinutes * 60000
+                repeat: true
+                running: !game.paused && !game.completed && !game.loadFailed
+                onTriggered: game.saveCurrentGame(true)
+            }
+
+            Timer {
+                id: saveIndicatorTimer
+                interval: 2500
+                onTriggered: game.saveStatus = ""
             }
 
             PuzzleCanvas {
@@ -413,12 +579,20 @@ ApplicationWindow {
                 enabled: !game.paused && !game.loadFailed
 
                 Component.onCompleted: {
-                    const loaded = game.requestedPieceCount > 0
-                                   ? startPuzzleWithPieceCount(game.imageUrl,
-                                                               game.requestedPieceCount)
-                                   : startPuzzle(game.imageUrl,
-                                                 game.requestedColumns,
-                                                 game.requestedRows)
+                    let loaded = false
+                    if (game.loadExisting) {
+                        const savedGame = saveGameSystem.loadState(game.saveSlot)
+                        game.elapsedSeconds = savedGame.elapsedSeconds || 0
+                        game.imageUrl = savedGame.originalImage || ""
+                        loaded = restoreState(savedGame.canvasState || {})
+                    } else {
+                        loaded = game.requestedPieceCount > 0
+                                 ? startPuzzleWithPieceCount(game.imageUrl,
+                                                             game.requestedPieceCount)
+                                 : startPuzzle(game.imageUrl,
+                                               game.requestedColumns,
+                                               game.requestedRows)
+                    }
                     game.loadFailed = !loaded
                     if (loaded)
                         gameTimer.start()
@@ -454,6 +628,13 @@ ApplicationWindow {
                         color: game.completed ? "#7ee787" : window.textColor
                         font.pixelSize: 20
                         font.bold: true
+                    }
+                    Label {
+                        visible: game.saveStatus.length > 0
+                        text: game.saveStatus
+                        color: game.saveStatus === qsTr("Save failed")
+                               ? "#ff8a80" : "#7ee787"
+                        font.pixelSize: 16
                     }
                     Item { Layout.fillWidth: true }
                     ActionButton {
@@ -585,7 +766,7 @@ ApplicationWindow {
                 Rectangle {
                     anchors.centerIn: parent
                     width: 380
-                    height: 350
+                    height: 420
                     radius: 16
                     color: window.panelColor
 
@@ -608,6 +789,10 @@ ApplicationWindow {
                         MenuButton {
                             text: qsTr("Settings")
                             onClicked: stack.push(settingsMenu)
+                        }
+                        MenuButton {
+                            text: qsTr("Save game")
+                            onClicked: game.saveCurrentGame(false)
                         }
                         MenuButton {
                             text: qsTr("Exit to menu")

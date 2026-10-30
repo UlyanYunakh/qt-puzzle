@@ -82,7 +82,28 @@ std::vector<int> PuzzleLogic::connectedComponent(int pieceId) const
 bool PuzzleLogic::isComplete() const
 {
     return !m_poses.empty()
-           && connectedComponent(0).size() == m_poses.size();
+        && connectedComponent(0).size() == m_poses.size();
+}
+
+std::vector<std::pair<int, int>> PuzzleLogic::connections() const
+{
+    std::vector<std::pair<int, int>> result;
+    for (int first = 0; first < static_cast<int>(m_connections.size()); ++first)
+        for (const int second : m_connections[first])
+            if (first < second)
+                result.emplace_back(first, second);
+    return result;
+}
+
+void PuzzleLogic::restoreConnections(
+    const std::vector<std::pair<int, int>>& connections)
+{
+    for (auto& pieceConnections : m_connections)
+        pieceConnections.clear();
+    for (const auto& [first, second] : connections)
+        if (isValidPiece(first) && isValidPiece(second)
+            && areGridNeighbours(first, second))
+            (void)connect(first, second);
 }
 
 void PuzzleLogic::detachMovingPieces(const std::vector<int>& movingPieceIds)
