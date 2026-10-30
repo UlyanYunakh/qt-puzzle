@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Puzzle VERSION 0.1 LANGUAGES CXX)
+project(Puzzle VERSION 0.1.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 6.12 REQUIRED COMPONENTS Multimedia Quick QuickControls2)
+qt_standard_project_setup(REQUIRES 6.8)
 
 set(PROJECT_SOURCES
         main.cpp
@@ -36,6 +37,10 @@ set(PROJECT_SOURCES
 qt_add_executable(Puzzle
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
+)
+
+set_source_files_properties(src/UI/Main.qml PROPERTIES
+        QT_RESOURCE_ALIAS Main.qml
 )
 
 qt_add_qml_module(Puzzle
@@ -94,35 +99,12 @@ qt_add_resources(Puzzle "puzzle_config"
 
 target_link_libraries(Puzzle PRIVATE Qt6::Multimedia Qt6::Quick Qt6::QuickControls2)
 target_include_directories(Puzzle PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-
-# Keep the Windows build runnable without relying on a machine-wide PATH.
-# windeployqt copies the Qt libraries, platform plugin, and MinGW runtime next
-# to the executable whenever the target is linked.
-if (WIN32)
-    get_target_property(QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
-    get_filename_component(QT_BIN_DIRECTORY "${QMAKE_EXECUTABLE}" DIRECTORY)
-    find_program(WINDEPLOYQT_EXECUTABLE
-            NAMES windeployqt
-            HINTS "${QT_BIN_DIRECTORY}"
-            NO_DEFAULT_PATH
-    )
-
-    if (NOT WINDEPLOYQT_EXECUTABLE)
-        message(FATAL_ERROR "windeployqt was not found beside qmake: ${QT_BIN_DIRECTORY}")
-    endif ()
-
-    add_custom_command(TARGET Puzzle POST_BUILD
-            COMMAND "${WINDEPLOYQT_EXECUTABLE}"
-            --no-translations
-            --compiler-runtime
-            "$<TARGET_FILE:Puzzle>"
-            COMMENT "Deploying Qt and MinGW runtime files"
-            VERBATIM
-    )
-endif ()
+target_compile_definitions(Puzzle PRIVATE
+        PUZZLE_VERSION="${PROJECT_VERSION}"
+)
 
 set_target_properties(Puzzle PROPERTIES
-        MACOSX_BUNDLE_GUI_IDENTIFIER com.example.Puzzle
+        MACOSX_BUNDLE_GUI_IDENTIFIER com.puzzle.app
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
         MACOSX_BUNDLE TRUE
@@ -137,6 +119,44 @@ install(TARGETS Puzzle
 )
 
 qt_finalize_executable(Puzzle)
+
+# Generate a self-contained installation. On Windows this invokes Qt's
+# deployment tooling with the QML import information collected for Puzzle, so
+# the package includes Qt DLLs, plugins, QML modules, the multimedia backend,
+# and the compiler runtime needed on a machine without Qt installed.
+qt_generate_deploy_qml_app_script(
+        TARGET Puzzle
+        OUTPUT_SCRIPT puzzle_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+)
+install(SCRIPT ${puzzle_deploy_script})
+
+if (WIN32)
+    # CPack's archive generator treats square brackets in a source path as a
+    # pattern. Package from inside a staging directory so projects living in a
+    # path such as "[Qt] Puzzle" still produce a complete archive.
+    set(PUZZLE_PACKAGE_NAME "Puzzle-${PROJECT_VERSION}-windows-x64")
+    set(PUZZLE_PACKAGE_STAGING_DIR "${CMAKE_BINARY_DIR}/package")
+    set(PUZZLE_PACKAGE_ROOT
+            "${PUZZLE_PACKAGE_STAGING_DIR}/${PUZZLE_PACKAGE_NAME}")
+    set(PUZZLE_PACKAGE_ARCHIVE
+            "${CMAKE_BINARY_DIR}/${PUZZLE_PACKAGE_NAME}.zip")
+
+    add_custom_target(portable-package
+            COMMAND "${CMAKE_COMMAND}" -E remove_directory
+            "${PUZZLE_PACKAGE_STAGING_DIR}"
+            COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}"
+            --prefix "${PUZZLE_PACKAGE_ROOT}"
+            COMMAND "${CMAKE_COMMAND}" -E chdir
+            "${PUZZLE_PACKAGE_STAGING_DIR}"
+            "${CMAKE_COMMAND}" -E tar cf
+            "${PUZZLE_PACKAGE_ARCHIVE}"
+            --format=zip "${PUZZLE_PACKAGE_NAME}"
+            DEPENDS Puzzle
+            COMMENT "Creating self-contained ${PUZZLE_PACKAGE_NAME}.zip"
+            VERBATIM
+    )
+endif ()
 
 if (BUILD_TESTING)
     add_executable(PuzzleLogicTests

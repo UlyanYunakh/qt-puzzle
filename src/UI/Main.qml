@@ -56,6 +56,7 @@ ApplicationWindow {
     }
 
     component MenuButton: SoundButton {
+        Layout.alignment: Qt.AlignHCenter
         Layout.preferredWidth: 260
         Layout.preferredHeight: 52
         font.pixelSize: 18
@@ -75,15 +76,17 @@ ApplicationWindow {
 
             ColumnLayout {
                 anchors.centerIn: parent
+                width: Math.min(parent.width - 48, 620)
                 spacing: 18
 
                 Label {
-                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true
                     Layout.bottomMargin: 24
-                    text: qsTr("Puzzle")
+                    text: qsTr("Everything puzzle")
                     color: window.textColor
                     font.pixelSize: 52
                     font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
                 }
 
                 MenuButton {

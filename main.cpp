@@ -13,7 +13,9 @@ int main(int argc, char* argv[])
 {
     QGuiApplication application(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("Puzzle"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("puzzle.app"));
     QCoreApplication::setApplicationName(QStringLiteral("Puzzle"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(PUZZLE_VERSION));
 
     const PuzzleConfig config = PuzzleConfigLoader::load(
         QStringLiteral(":/config/puzzle-config.json"));

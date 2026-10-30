@@ -7,15 +7,33 @@
   },
   "configurePresets": [
     {
-      "name": "qt-mingw-debug",
-      "displayName": "Qt 6.12 MinGW Debug",
+      "name": "qt-mingw-base",
+      "hidden": true,
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/cmake-build-debug",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CXX_COMPILER": "E:/Projects/Qt/Tools/mingw1310_64/bin/g++.exe",
         "CMAKE_MAKE_PROGRAM": "C:/Users/Asus/.cmake-deps/ninja/win/x64/ninja.exe",
         "CMAKE_PREFIX_PATH": "E:/Projects/Qt/6.12.0/mingw_64"
+      }
+    },
+    {
+      "name": "qt-mingw-debug",
+      "displayName": "Qt 6.12 MinGW Debug",
+      "inherits": "qt-mingw-base",
+      "binaryDir": "${sourceDir}/cmake-build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "qt-mingw-release",
+      "displayName": "Qt 6.12 MinGW Release",
+      "inherits": "qt-mingw-base",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "OFF",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/dist/Puzzle"
       }
     }
   ],
@@ -24,6 +42,22 @@
       "name": "qt-mingw-debug",
       "displayName": "Build Qt 6.12 MinGW Debug",
       "configurePreset": "qt-mingw-debug"
+    },
+    {
+      "name": "qt-mingw-release",
+      "displayName": "Build Qt 6.12 MinGW Release",
+      "configurePreset": "qt-mingw-release",
+      "targets": [
+        "Puzzle"
+      ]
+    },
+    {
+      "name": "qt-mingw-package",
+      "displayName": "Package Puzzle for Windows",
+      "configurePreset": "qt-mingw-release",
+      "targets": [
+        "portable-package"
+      ]
     }
   ]
 }
