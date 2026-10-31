@@ -86,17 +86,14 @@ protected:
     /// Creates the initial piece layout when the canvas receives a usable size.
     void geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry) override;
 
-    /// Starts piece dragging, marquee selection, or panning based on the pressed button.
+    /// Starts piece dragging, lasso selection, or panning based on the pressed button.
     void mousePressEvent(QMouseEvent* event) override;
 
-    /// Updates the active drag, marquee, or pan interaction.
+    /// Updates the active drag, lasso, or pan interaction.
     void mouseMoveEvent(QMouseEvent* event) override;
 
     /// Completes the active pointer interaction.
     void mouseReleaseEvent(QMouseEvent* event) override;
-
-    /// Selects the complete connected component under the pointer.
-    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
     /// Zooms around the cursor while keeping its world position fixed.
     void wheelEvent(QWheelEvent* event) override;
@@ -121,7 +118,7 @@ private:
     {
         None,
         DragPieces,
-        Marquee,
+        Lasso,
         Pan
     };
 
@@ -144,12 +141,6 @@ private:
     /// Returns the piece outline after applying its current rotation.
     [[nodiscard]] QPolygonF rotatedOutline(const Piece& piece) const;
 
-    /// Returns the axis-aligned world bounds of a rotated piece.
-    [[nodiscard]] QRectF pieceWorldBounds(const Piece& piece) const;
-
-    /// Returns the normalized world-space marquee rectangle.
-    [[nodiscard]] QRectF marqueeRect() const;
-
     /// Clears the selection state of every piece.
     void clearSelection();
 
@@ -159,8 +150,11 @@ private:
     /// Returns how many pieces belong to the persistent group selection.
     [[nodiscard]] int selectedPieceCount() const;
 
-    /// Recalculates selection from the current marquee and modifier mode.
-    void updateMarqueeSelection();
+    /// Adds a sampled pointer position to the freehand lasso.
+    void appendLassoPoint(const QPointF& worldPosition);
+
+    /// Recalculates selection from the current lasso and modifier mode.
+    void updateLassoSelection();
 
     /// Positions the active piece or selected group relative to the drag origin.
     void moveActivePieces(const QPointF& screenPosition);
@@ -183,7 +177,7 @@ private:
     /// Invalidates piece geometry and every overlay that depends on it.
     void markGeometryDirty();
 
-    /// Invalidates selection and marquee overlay geometry.
+    /// Invalidates selection and lasso overlay geometry.
     void markOverlayDirty();
 
     PuzzleConfig m_config;
@@ -195,7 +189,8 @@ private:
     QVector<Piece> m_pieces;
     QVector<int> m_drawOrder;
     QVector<QPointF> m_dragStartPositions;
-    QVector<bool> m_selectionBeforeMarquee;
+    QVector<bool> m_selectionBeforeLasso;
+    QPolygonF m_lassoPoints;
 
     Interaction m_interaction = Interaction::None;
     QPointF m_pressScreen;
@@ -215,8 +210,9 @@ private:
     bool m_rotateCounterClockwise = false;
     bool m_dragMoved = false;
     bool m_movingSelection = false;
-    bool m_marqueeAdditive = false;
-    bool m_marqueeToggle = false;
+    bool m_selectionOutlineEnabled = false;
+    bool m_lassoAdditive = false;
+    bool m_lassoToggle = false;
     bool m_initialized = false;
     bool m_puzzleCompleted = false;
     quint64 m_geometryRevision = 1;

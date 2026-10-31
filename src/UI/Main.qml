@@ -102,6 +102,10 @@ ApplicationWindow {
                     onClicked: stack.push(settingsMenu)
                 }
                 MenuButton {
+                    text: qsTr("Controls")
+                    onClicked: stack.push(controlsMenu)
+                }
+                MenuButton {
                     text: qsTr("Exit")
                     onClicked: Qt.quit()
                 }
@@ -497,6 +501,119 @@ ApplicationWindow {
     }
 
     Component {
+        id: controlsMenu
+
+        Rectangle {
+            id: controlsPage
+            color: applicationSettings.backgroundColor
+
+            property var hints: [
+                { input: qsTr("Left click a piece"),
+                  action: qsTr("Select its connected group") },
+                { input: qsTr("Left-drag a piece"),
+                  action: qsTr("Move the selected pieces") },
+                { input: qsTr("Left-drag empty space"),
+                  action: qsTr("Draw a lasso; release to select enclosed pieces") },
+                { input: qsTr("Left click empty space"),
+                  action: qsTr("Clear the current selection") },
+                { input: qsTr("Ctrl + left click"),
+                  action: qsTr("Toggle one piece in the selection") },
+                { input: qsTr("Shift + left click"),
+                  action: qsTr("Add one piece to the selection") },
+                { input: qsTr("Ctrl + lasso"),
+                  action: qsTr("Toggle all enclosed pieces") },
+                { input: qsTr("Shift + lasso"),
+                  action: qsTr("Add all enclosed pieces") },
+                { input: qsTr("Right click a piece"),
+                  action: qsTr("Rotate the piece or selection clockwise") },
+                { input: qsTr("Shift + right click"),
+                  action: qsTr("Rotate the piece or selection counter-clockwise") },
+                { input: qsTr("Right-drag"),
+                  action: qsTr("Pan the puzzle canvas") },
+                { input: qsTr("Right-drag during a move"),
+                  action: qsTr("Pan while keeping the pieces under the pointer") },
+                { input: qsTr("Mouse wheel"),
+                  action: qsTr("Zoom around the pointer") },
+                { input: qsTr("Escape"),
+                  action: qsTr("Cancel the current action and clear selection") }
+            ]
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 48, 760)
+                height: Math.min(parent.height - 48, 700)
+                radius: 16
+                color: window.panelColor
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 16
+
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: qsTr("Controls")
+                        color: window.textColor
+                        font.pixelSize: 38
+                        font.bold: true
+                    }
+
+                    ScrollView {
+                        id: controlsScroll
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        contentWidth: availableWidth
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                        ColumnLayout {
+                            width: controlsScroll.availableWidth
+                            spacing: 0
+
+                            Repeater {
+                                model: controlsPage.hints
+
+                                RowLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: 18
+
+                                    Label {
+                                        Layout.preferredWidth: 230
+                                        Layout.alignment: Qt.AlignTop
+                                        topPadding: 10
+                                        bottomPadding: 10
+                                        text: modelData.input
+                                        color: "#80b9ff"
+                                        font.pixelSize: 16
+                                        font.bold: true
+                                        wrapMode: Text.WordWrap
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        Layout.alignment: Qt.AlignTop
+                                        topPadding: 10
+                                        bottomPadding: 10
+                                        text: modelData.action
+                                        color: window.textColor
+                                        font.pixelSize: 16
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    MenuButton {
+                        text: qsTr("Back")
+                        onClicked: stack.pop()
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
         id: gamePage
 
         Item {
@@ -769,7 +886,7 @@ ApplicationWindow {
                 Rectangle {
                     anchors.centerIn: parent
                     width: 380
-                    height: 420
+                    height: 480
                     radius: 16
                     color: window.panelColor
 
@@ -792,6 +909,10 @@ ApplicationWindow {
                         MenuButton {
                             text: qsTr("Settings")
                             onClicked: stack.push(settingsMenu)
+                        }
+                        MenuButton {
+                            text: qsTr("Controls")
+                            onClicked: stack.push(controlsMenu)
                         }
                         MenuButton {
                             text: qsTr("Save game")

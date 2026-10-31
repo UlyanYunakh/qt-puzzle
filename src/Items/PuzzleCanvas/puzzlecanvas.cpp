@@ -131,10 +131,12 @@ namespace
                              QVector<quint32>& indices,
                              const QPolygonF& outline,
                              const QPointF& position,
-                             qreal thickness)
+                             qreal thickness,
+                             bool closed = true)
     {
         const qreal halfThickness = thickness * 0.5;
-        for (int i = 0; i < outline.size(); ++i)
+        const int segmentCount = closed ? outline.size() : outline.size() - 1;
+        for (int i = 0; i < segmentCount; ++i)
         {
             const QPointF start = position + outline.at(i);
             const QPointF end = position + outline.at((i + 1) % outline.size());
@@ -157,18 +159,6 @@ namespace
                 vertex + 0, vertex + 2, vertex + 3
             };
         }
-    }
-
-    // Uses quads instead of line primitives for consistent borders on every graphics backend.
-    QVector<QRectF> borderQuads(const QRectF& rect, qreal thickness)
-    {
-        const QRectF outer = rect.adjusted(-thickness, -thickness, thickness, thickness);
-        return {
-            QRectF(outer.left(), outer.top(), outer.width(), thickness),
-            QRectF(outer.left(), rect.bottom(), outer.width(), thickness),
-            QRectF(outer.left(), rect.top(), thickness, rect.height()),
-            QRectF(rect.right(), rect.top(), thickness, rect.height())
-        };
     }
 } // namespace
 
@@ -405,11 +395,13 @@ void PuzzleCanvas::resetPieces()
     m_pieces.clear();
     m_drawOrder.clear();
     m_dragStartPositions.clear();
-    m_selectionBeforeMarquee.clear();
+    m_selectionBeforeLasso.clear();
+    m_lassoPoints.clear();
     m_logic = PuzzleLogic();
     m_interaction = Interaction::None;
     m_activePiece = -1;
     m_movingSelection = false;
+    m_selectionOutlineEnabled = false;
     m_secondaryPressed = false;
     m_secondaryPanning = false;
     m_initialized = false;
@@ -618,11 +610,6 @@ QPolygonF PuzzleCanvas::rotatedOutline(const Piece& piece) const
     return outline;
 }
 
-QRectF PuzzleCanvas::pieceWorldBounds(const Piece& piece) const
-{
-    return rotatedOutline(piece).boundingRect().translated(piece.position);
-}
-
 // Tests in reverse draw order so overlapping pieces select the visible topmost piece.
 int PuzzleCanvas::hitTest(const QPointF& worldPosition) const
 {
@@ -635,12 +622,6 @@ int PuzzleCanvas::hitTest(const QPointF& worldPosition) const
             return *it;
     }
     return -1;
-}
-
-// Normalization supports marquee dragging in every direction.
-QRectF PuzzleCanvas::marqueeRect() const
-{
-    return QRectF(m_pressWorld, m_currentWorld).normalized();
 }
 
 // Clears selection and schedules only the lightweight overlay for rebuilding.
@@ -676,18 +657,31 @@ void PuzzleCanvas::raiseMovingPieces()
     markGeometryDirty();
 }
 
-// Applies replace, union, or toggle behavior from the selection captured at drag start.
-void PuzzleCanvas::updateMarqueeSelection()
+// Samples the pointer densely enough for a smooth lasso without storing every event.
+void PuzzleCanvas::appendLassoPoint(const QPointF& worldPosition)
 {
-    const QRectF area = marqueeRect();
+    if (!m_lassoPoints.isEmpty())
+    {
+        const QPointF delta = worldPosition - m_lassoPoints.constLast();
+        if (std::hypot(delta.x(), delta.y()) * m_zoom < 2.0)
+            return;
+    }
+    m_lassoPoints.push_back(worldPosition);
+}
+
+// Applies replace, union, or toggle behavior from the selection captured at drag start.
+void PuzzleCanvas::updateLassoSelection()
+{
     for (int id = 0; id < m_pieces.size(); ++id)
     {
         const Piece& piece = m_pieces.at(id);
-        const bool inside = area.intersects(pieceWorldBounds(piece));
-        if (m_marqueeToggle)
-            m_pieces[id].selected = m_selectionBeforeMarquee.at(id) != inside;
-        else if (m_marqueeAdditive)
-            m_pieces[id].selected = m_selectionBeforeMarquee.at(id) || inside;
+        const QPointF center = piece.position + piece.rotationCenter;
+        const bool inside = m_lassoPoints.size() >= 3
+            && m_lassoPoints.containsPoint(center, Qt::OddEvenFill);
+        if (m_lassoToggle)
+            m_pieces[id].selected = m_selectionBeforeLasso.at(id) != inside;
+        else if (m_lassoAdditive)
+            m_pieces[id].selected = m_selectionBeforeLasso.at(id) || inside;
         else
             m_pieces[id].selected = inside;
     }
@@ -704,9 +698,8 @@ void PuzzleCanvas::moveActivePieces(const QPointF& screenPosition)
             < QGuiApplication::styleHints()->startDragDistance())
             return;
 
-        // A single connected piece, or a selected subset of a component, is
-        // detached only when the pointer actually starts moving. This preserves
-        // the component during the first click of a double click.
+        // A selected subset of a component is detached only when the pointer
+        // actually starts moving.
         m_logic.detachMovingPieces(movingPieceIds());
         m_dragMoved = true;
     }
@@ -847,7 +840,7 @@ void PuzzleCanvas::markGeometryDirty()
     update();
 }
 
-// Marks selection and marquee visuals for synchronization on the next frame.
+// Marks selection and lasso visuals for synchronization on the next frame.
 void PuzzleCanvas::markOverlayDirty()
 {
     ++m_overlayRevision;
@@ -911,19 +904,24 @@ void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
         bool beginMove = true;
         if (control)
         {
+            m_selectionOutlineEnabled = true;
             m_pieces[hit].selected = !m_pieces.at(hit).selected;
             markOverlayDirty();
             beginMove = m_pieces.at(hit).selected;
         }
         else if (shift)
         {
+            m_selectionOutlineEnabled = true;
             m_pieces[hit].selected = true;
             markOverlayDirty();
         }
         else if (!(m_pieces.at(hit).selected && selectedPieceCount() > 1))
         {
-            // A normal LMB move has no persistent single-piece selection state.
+            const std::vector<int> component = m_logic.connectedComponent(hit);
+            m_selectionOutlineEnabled = false;
             clearSelection();
+            for (const int id : component)
+                m_pieces[id].selected = true;
         }
 
         if (beginMove)
@@ -941,15 +939,15 @@ void PuzzleCanvas::mousePressEvent(QMouseEvent* event)
     }
     else
     {
-        // Marquee selection is recomputed from this snapshot instead of toggled cumulatively.
-        m_selectionBeforeMarquee.resize(m_pieces.size());
+        // Lasso selection is recomputed from this snapshot instead of toggled cumulatively.
+        m_selectionBeforeLasso.resize(m_pieces.size());
         for (int id = 0; id < m_pieces.size(); ++id)
-            m_selectionBeforeMarquee[id] = m_pieces.at(id).selected;
-        m_marqueeToggle = control;
-        m_marqueeAdditive = shift;
-        if (!control && !shift)
-            clearSelection();
-        m_interaction = Interaction::Marquee;
+            m_selectionBeforeLasso[id] = m_pieces.at(id).selected;
+        m_lassoToggle = control;
+        m_lassoAdditive = shift;
+        m_lassoPoints.clear();
+        appendLassoPoint(m_pressWorld);
+        m_interaction = Interaction::Lasso;
         markOverlayDirty();
     }
     event->accept();
@@ -985,15 +983,16 @@ void PuzzleCanvas::mouseMoveEvent(QMouseEvent* event)
     {
         moveActivePieces(event->position());
     }
-    else if (m_interaction == Interaction::Marquee)
+    else if (m_interaction == Interaction::Lasso)
     {
         m_currentWorld = toWorld(event->position());
-        updateMarqueeSelection();
+        appendLassoPoint(m_currentWorld);
+        markOverlayDirty();
     }
     event->accept();
 }
 
-// Commits the final marquee position and removes transient interaction visuals.
+// Commits the final lasso shape and removes transient interaction visuals.
 void PuzzleCanvas::mouseReleaseEvent(QMouseEvent* event)
 {
     if (m_interaction == Interaction::DragPieces)
@@ -1069,41 +1068,14 @@ void PuzzleCanvas::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
 
-    if (m_interaction == Interaction::Marquee)
+    if (m_interaction == Interaction::Lasso)
     {
         m_currentWorld = toWorld(event->position());
-        updateMarqueeSelection();
+        appendLassoPoint(m_currentWorld);
+        m_selectionOutlineEnabled = true;
+        updateLassoSelection();
     }
     m_interaction = Interaction::None;
-    markOverlayDirty();
-    event->accept();
-}
-
-// The first click/release is intentionally non-destructive until movement crosses
-// the drag threshold, so the original component is still available here.
-void PuzzleCanvas::mouseDoubleClickEvent(QMouseEvent* event)
-{
-    if (event->button() != Qt::LeftButton)
-    {
-        event->ignore();
-        return;
-    }
-
-    const int hit = hitTest(toWorld(event->position()));
-    if (hit < 0)
-    {
-        event->accept();
-        return;
-    }
-
-    const std::vector<int> component = m_logic.connectedComponent(hit);
-    clearSelection();
-    for (const int id : component)
-        m_pieces[id].selected = true;
-
-    m_interaction = Interaction::None;
-    m_activePiece = -1;
-    m_movingSelection = false;
     markOverlayDirty();
     event->accept();
 }
@@ -1131,6 +1103,7 @@ void PuzzleCanvas::keyPressEvent(QKeyEvent* event)
         m_interaction = Interaction::None;
         m_activePiece = -1;
         m_movingSelection = false;
+        m_selectionOutlineEnabled = false;
         clearSelection();
         event->accept();
     }
@@ -1179,8 +1152,8 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         root->selectionNode = createFlatNode(m_config.appearance.selection);
         root->contentNode->appendChildNode(root->selectionNode);
 
-        // Keep this translucent node alive between marquee drags so it remains in the
-        // renderer's alpha pass after a marquee that selected no pieces.
+        // Keep this translucent node alive between lasso drags so it remains in the
+        // renderer's alpha pass after a lasso that selected no pieces.
         root->marqueeFillNode = createFlatNode(m_config.appearance.marqueeFill);
         root->contentNode->appendChildNode(root->marqueeFillNode);
         root->marqueeBorderNode = createFlatNode(m_config.appearance.marqueeBorder);
@@ -1270,10 +1243,11 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 
     if (root->overlayRevision != m_overlayRevision)
     {
-        // Only an actual multi-selection is highlighted; a lone moved piece is not.
+        // Connected pieces selected implicitly by a normal click move together
+        // without an outline. Only explicit multi-selection is highlighted.
         QVector<QPointF> selectionPoints;
         QVector<quint32> selectionIndices;
-        if (selectedPieceCount() > 1)
+        if (m_selectionOutlineEnabled && selectedPieceCount() > 1)
         {
             for (const Piece& piece : std::as_const(m_pieces))
             {
@@ -1285,25 +1259,21 @@ QSGNode* PuzzleCanvas::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         }
         setColoredTriangles(root->selectionNode, selectionPoints, selectionIndices);
 
-        // Inverse zoom keeps marquee borders approximately constant on screen.
-        QVector<QRectF> marqueeFill;
-        QVector<QRectF> marqueeBorder;
-        const bool marqueeActive = m_interaction == Interaction::Marquee;
-        if (marqueeActive)
-        {
-            const QRectF area = marqueeRect();
-            marqueeFill.push_back(area);
-            marqueeBorder = borderQuads(
-                area, m_config.appearance.marqueeBorderWidth / m_zoom);
-        }
-        else
-        {
-            // A non-empty off-canvas quad avoids the zero-geometry transition that can
-            // make translucent nodes disappear from a later alpha-render pass.
-            marqueeFill.push_back(QRectF(-1000000.0, -1000000.0, 1.0, 1.0));
-        }
-        setColoredQuads(root->marqueeFillNode, marqueeFill);
-        setColoredQuads(root->marqueeBorderNode, marqueeBorder);
+        // The freehand path is closed visually while drawing. A border-only lasso
+        // keeps the pieces beneath it unobscured and works for concave shapes.
+        QVector<QPointF> lassoBorderPoints;
+        QVector<quint32> lassoBorderIndices;
+        if (m_interaction == Interaction::Lasso && m_lassoPoints.size() >= 2)
+            appendOutlineBorder(lassoBorderPoints, lassoBorderIndices,
+                                m_lassoPoints, {},
+                                m_config.appearance.marqueeBorderWidth / m_zoom,
+                                false);
+
+        // Keep the translucent node alive in the renderer's alpha pass.
+        setColoredQuads(root->marqueeFillNode,
+                        {QRectF(-1000000.0, -1000000.0, 1.0, 1.0)});
+        setColoredTriangles(root->marqueeBorderNode,
+                            lassoBorderPoints, lassoBorderIndices);
         root->overlayRevision = m_overlayRevision;
     }
 
