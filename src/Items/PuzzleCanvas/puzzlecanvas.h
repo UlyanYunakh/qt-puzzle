@@ -28,6 +28,8 @@ class PuzzleCanvas : public QQuickItem
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor
         NOTIFY backgroundColorChanged)
     Q_PROPERTY(QUrl sourceImage READ sourceImage NOTIFY sourceImageChanged)
+    Q_PROPERTY(qreal magnetism READ magnetism WRITE setMagnetism NOTIFY magnetismChanged)
+    Q_PROPERTY(bool puzzleCompleted READ isPuzzleCompleted NOTIFY puzzleCompletedChanged)
 
 public:
     /// Creates a canvas and loads the built-in test puzzle image.
@@ -47,6 +49,15 @@ public:
 
     /// Returns the image URL used by the current puzzle.
     [[nodiscard]] QUrl sourceImage() const;
+
+    /// Returns whether every piece belongs to the completed puzzle assembly.
+    [[nodiscard]] bool isPuzzleCompleted() const;
+
+    /// Returns the magnetic attraction radius as a ratio of piece size.
+    [[nodiscard]] qreal magnetism() const;
+
+    /// Changes the magnetic attraction radius for the current puzzle.
+    void setMagnetism(qreal magnetism);
 
     /// Returns the settings used to distribute pieces before play begins.
     [[nodiscard]] const PuzzleInitialLayoutConfig& initialLayoutConfig() const;
@@ -69,6 +80,8 @@ public:
 signals:
     void backgroundColorChanged();
     void sourceImageChanged();
+    void magnetismChanged();
+    void puzzleCompletedChanged();
 
     /// Emitted once after a user finishes moving one piece or a selected group.
     void piecesPlaced(const QList<int>& pieceIds, bool snapped);
@@ -174,6 +187,9 @@ private:
     /// Rotates the active piece or selection as one rigid group by 90 degrees.
     void rotateMovingPieces(int direction);
 
+    /// Rotates the clicked piece or selection together with every connected piece.
+    void rotateConnectedSelection(int hitPiece, int direction);
+
     /// Invalidates piece geometry and every overlay that depends on it.
     void markGeometryDirty();
 
@@ -203,6 +219,8 @@ private:
     int m_activePiece = -1;
     qreal m_zoom = 1.0;
     qreal m_maximumZoom = 6.0;
+    qreal m_pieceSize = 0.0;
+    qreal m_magnetism = 0.25;
     qreal m_magnetRadius = 0.0;
     bool m_panMoved = false;
     bool m_secondaryPressed = false;

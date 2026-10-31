@@ -182,12 +182,13 @@ ApplicationWindow {
                         id: pieceCountBox
                         Layout.fillWidth: true
                         model: [qsTr("About 250"), qsTr("About 500"),
-                            qsTr("About 1000"), qsTr("About 2000"), qsTr("Custom")]
+                            qsTr("About 750"), qsTr("About 1000"),
+                            qsTr("About 1500"), qsTr("About 2000"), qsTr("Custom")]
                     }
 
                     Label {
                         Layout.fillWidth: true
-                        visible: pieceCountBox.currentIndex < 4
+                        visible: pieceCountBox.currentIndex < pieceCountBox.count - 1
                         text: qsTr("The final count may differ slightly to keep pieces proportional.")
                         color: "#aeb8c4"
                         wrapMode: Text.WordWrap
@@ -198,7 +199,7 @@ ApplicationWindow {
                         columns: 2
                         rowSpacing: 10
                         columnSpacing: 16
-                        visible: pieceCountBox.currentIndex === 4
+                        visible: pieceCountBox.currentIndex === pieceCountBox.count - 1
 
                         Label { text: qsTr("Width (columns)"); color: window.textColor }
                         SpinBox {
@@ -237,7 +238,7 @@ ApplicationWindow {
                     Item { Layout.fillHeight: true }
 
                     Label {
-                        visible: pieceCountBox.currentIndex === 4
+                        visible: pieceCountBox.currentIndex === pieceCountBox.count - 1
                                  && columnCount.value * rowCount.value > 10000
                         text: qsTr("The custom puzzle is limited to 10,000 pieces.")
                         color: "#ff8a80"
@@ -255,13 +256,14 @@ ApplicationWindow {
                         ActionButton {
                             text: qsTr("Start puzzle")
                             highlighted: true
-                            enabled: pieceCountBox.currentIndex !== 4
+                            enabled: pieceCountBox.currentIndex !== pieceCountBox.count - 1
                                      || columnCount.value * rowCount.value <= 10000
                             onClicked: {
-                                const predefined = [250, 500, 1000, 2000]
+                                const predefined = [250, 500, 750, 1000, 1500, 2000]
                                 stack.replace(gamePage, {
                                     imageUrl: startPage.selectedImage,
-                                    requestedPieceCount: pieceCountBox.currentIndex < 4
+                                    requestedPieceCount: pieceCountBox.currentIndex
+                                                         < predefined.length
                                                          ? predefined[pieceCountBox.currentIndex]
                                                          : 0,
                                     requestedColumns: columnCount.value,
@@ -385,7 +387,7 @@ ApplicationWindow {
             Rectangle {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 520)
-                height: Math.min(parent.height - 24, 560)
+                height: Math.min(parent.height - 24, 650)
                 radius: 16
                 color: window.panelColor
 
@@ -449,6 +451,24 @@ ApplicationWindow {
                             : applicationSettings.autoSaveMinutes === 10 ? 2 : 1
                         onActivated: applicationSettings.autoSaveMinutes =
                             currentIndex === 0 ? 1 : currentIndex === 2 ? 10 : 5
+                    }
+
+                    Label {
+                        text: qsTr("Piece magnetism: %1%").arg(Math.round(
+                            100 * (magnetismSlider.value - applicationSettings.minimumMagnetism)
+                            / Math.max(0.001, applicationSettings.maximumMagnetism
+                                               - applicationSettings.minimumMagnetism)))
+                        color: window.textColor
+                        font.pixelSize: 17
+                    }
+                    Slider {
+                        id: magnetismSlider
+                        Layout.fillWidth: true
+                        from: applicationSettings.minimumMagnetism
+                        to: applicationSettings.maximumMagnetism
+                        stepSize: (to - from) / 100
+                        value: applicationSettings.magnetism
+                        onMoved: applicationSettings.magnetism = value
                     }
 
                     Label {
@@ -525,9 +545,9 @@ ApplicationWindow {
                 { input: qsTr("Shift + lasso"),
                   action: qsTr("Add all enclosed pieces") },
                 { input: qsTr("Right click a piece"),
-                  action: qsTr("Rotate the piece or selection clockwise") },
+                  action: qsTr("Rotate its connected group or selection clockwise") },
                 { input: qsTr("Shift + right click"),
-                  action: qsTr("Rotate the piece or selection counter-clockwise") },
+                  action: qsTr("Rotate its connected group or selection counter-clockwise") },
                 { input: qsTr("Right-drag"),
                   action: qsTr("Pan the puzzle canvas") },
                 { input: qsTr("Right-drag during a move"),
@@ -696,6 +716,7 @@ ApplicationWindow {
                 id: canvas
                 anchors.fill: parent
                 backgroundColor: applicationSettings.backgroundColor
+                magnetism: applicationSettings.magnetism
                 enabled: !game.paused && !game.loadFailed
 
                 Component.onCompleted: {
@@ -714,7 +735,8 @@ ApplicationWindow {
                                                game.requestedRows)
                     }
                     game.loadFailed = !loaded
-                    if (loaded)
+                    game.completed = loaded && canvas.puzzleCompleted
+                    if (loaded && !game.completed)
                         gameTimer.start()
                 }
 

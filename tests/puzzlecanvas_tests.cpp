@@ -21,5 +21,8 @@ int main(int argc, char* argv[])
     if (restoredCanvas.saveState().value(QStringLiteral("pieces")).toList().size()
         != savedState.value(QStringLiteral("pieces")).toList().size())
         return 5;
+    restoredCanvas.setMagnetism(0.0);
+    if (!qFuzzyIsNull(restoredCanvas.magnetism()))
+        return 6;
     return 0;
 }

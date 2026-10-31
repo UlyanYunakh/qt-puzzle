@@ -24,7 +24,11 @@ int main(int argc, char* argv[])
 
     QQmlApplicationEngine engine;
     PuzzleSoundSystem soundSystem(config.audio);
-    PuzzleApplicationSettings applicationSettings(config.appearance.background);
+    PuzzleApplicationSettings applicationSettings(
+        config.appearance.background,
+        config.interaction.magnetRadiusRatio,
+        config.interaction.minimumMagnetRadiusRatio,
+        config.interaction.maximumMagnetRadiusRatio);
     PuzzleSaveGameSystem saveGameSystem;
     engine.rootContext()->setContextProperty(QStringLiteral("puzzleSoundSystem"),
                                              &soundSystem);

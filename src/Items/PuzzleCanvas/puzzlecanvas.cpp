@@ -174,6 +174,7 @@ PuzzleCanvas::PuzzleCanvas(const PuzzleConfig& config, QQuickItem* parent)
       , m_image(m_config.imageResource)
       , m_backgroundColor(m_config.appearance.background)
       , m_shapeSet(PuzzleShapeLoader::load(m_config.shapeResource))
+      , m_magnetism(m_config.interaction.magnetRadiusRatio)
 {
     m_maximumZoom = m_config.interaction.maximumZoom;
     m_sourceImageUrl = QUrl(QStringLiteral("qrc") + m_config.imageResource);
@@ -191,6 +192,26 @@ qreal PuzzleCanvas::maximumZoom() const
 QUrl PuzzleCanvas::sourceImage() const
 {
     return m_sourceImageUrl;
+}
+
+bool PuzzleCanvas::isPuzzleCompleted() const
+{
+    return m_puzzleCompleted;
+}
+
+qreal PuzzleCanvas::magnetism() const
+{
+    return m_magnetism;
+}
+
+void PuzzleCanvas::setMagnetism(qreal magnetism)
+{
+    magnetism = std::max<qreal>(0.0, magnetism);
+    if (qFuzzyCompare(m_magnetism, magnetism))
+        return;
+    m_magnetism = magnetism;
+    m_magnetRadius = m_pieceSize * m_magnetism;
+    emit magnetismChanged();
 }
 
 QColor PuzzleCanvas::backgroundColor() const
@@ -385,7 +406,12 @@ bool PuzzleCanvas::restoreState(const QVariantMap& state)
                     state.value(QStringLiteral("panY")).toDouble());
     m_zoom = std::clamp(state.value(QStringLiteral("zoom"), 1.0).toDouble(),
                         m_config.interaction.minimumZoom, m_maximumZoom);
-    m_puzzleCompleted = m_logic.isComplete();
+    const bool completed = m_logic.isComplete();
+    if (m_puzzleCompleted != completed)
+    {
+        m_puzzleCompleted = completed;
+        emit puzzleCompletedChanged();
+    }
     markGeometryDirty();
     return true;
 }
@@ -405,8 +431,14 @@ void PuzzleCanvas::resetPieces()
     m_secondaryPressed = false;
     m_secondaryPanning = false;
     m_initialized = false;
-    m_puzzleCompleted = false;
+    if (m_puzzleCompleted)
+    {
+        m_puzzleCompleted = false;
+        emit puzzleCompletedChanged();
+    }
     m_zoom = 1.0;
+    m_pieceSize = 0.0;
+    m_magnetRadius = 0.0;
     m_pan = QPointF();
     m_maximumZoom = m_config.interaction.maximumZoom;
     markGeometryDirty();
@@ -520,10 +552,9 @@ void PuzzleCanvas::initializePieces()
     if (slotCenters.size() < pieceCount)
         throw std::runtime_error("Unable to fit non-overlapping pieces around the workspace");
 
-    m_magnetRadius = std::min(pieceWidth, pieceHeight)
-        * m_config.interaction.magnetRadiusRatio;
-    const qreal pieceSize = std::max<qreal>(0.001,
-                                            std::min(pieceWidth, pieceHeight));
+    m_pieceSize = std::max<qreal>(0.001, std::min(pieceWidth, pieceHeight));
+    m_magnetRadius = m_pieceSize * m_magnetism;
+    const qreal pieceSize = m_pieceSize;
     m_maximumZoom = std::clamp(
         m_config.interaction.zoomedPieceSize / pieceSize,
         m_config.interaction.maximumZoom,
@@ -786,6 +817,7 @@ PuzzleSnapResult PuzzleCanvas::snapMovingPieces()
     if (!m_puzzleCompleted && m_logic.isComplete())
     {
         m_puzzleCompleted = true;
+        emit puzzleCompletedChanged();
         emit puzzleCompleted();
     }
     return snap;
@@ -830,6 +862,45 @@ void PuzzleCanvas::rotateMovingPieces(int direction)
     m_dragMoved = true;
     synchronizeMovingPiecePoses();
     markGeometryDirty();
+}
+
+void PuzzleCanvas::rotateConnectedSelection(int hitPiece, int direction)
+{
+    if (hitPiece < 0 || hitPiece >= m_pieces.size())
+        return;
+
+    QVector<bool> previousSelection;
+    previousSelection.reserve(m_pieces.size());
+    for (const Piece& piece : std::as_const(m_pieces))
+        previousSelection.push_back(piece.selected);
+
+    std::vector<int> seeds;
+    if (m_pieces.at(hitPiece).selected && selectedPieceCount() > 1)
+    {
+        for (int id = 0; id < m_pieces.size(); ++id)
+            if (m_pieces.at(id).selected)
+                seeds.push_back(id);
+    }
+    else
+    {
+        seeds.push_back(hitPiece);
+    }
+
+    for (Piece& piece : m_pieces)
+        piece.selected = false;
+    for (const int seed : seeds)
+        for (const int id : m_logic.connectedComponent(seed))
+            m_pieces[id].selected = true;
+
+    m_activePiece = hitPiece;
+    m_movingSelection = true;
+    rotateMovingPieces(direction);
+
+    for (int id = 0; id < m_pieces.size(); ++id)
+        m_pieces[id].selected = previousSelection.at(id);
+    m_activePiece = -1;
+    m_movingSelection = false;
+    markOverlayDirty();
 }
 
 // Revisions transfer invalidation safely from the GUI thread to the render thread.
@@ -1053,12 +1124,7 @@ void PuzzleCanvas::mouseReleaseEvent(QMouseEvent* event)
             const int hit = hitTest(m_pressWorld);
             if (hit >= 0)
             {
-                m_activePiece = hit;
-                m_movingSelection = m_pieces.at(hit).selected
-                    && selectedPieceCount() > 1;
-                rotateMovingPieces(m_rotateCounterClockwise ? -1 : 1);
-                m_activePiece = -1;
-                m_movingSelection = false;
+                rotateConnectedSelection(hit, m_rotateCounterClockwise ? -1 : 1);
                 m_dragMoved = false;
             }
         }

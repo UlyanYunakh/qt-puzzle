@@ -111,8 +111,14 @@ PuzzleConfig PuzzleConfigLoader::load(const QString& resourcePath)
         QStringLiteral("zoomedPieceSize")).toDouble(config.interaction.zoomedPieceSize);
     config.interaction.adaptiveZoomLimit = interaction.value(
         QStringLiteral("adaptiveZoomLimit")).toDouble(config.interaction.adaptiveZoomLimit);
+    config.interaction.minimumMagnetRadiusRatio = interaction.value(
+                                                                 QStringLiteral("minimumMagnetRadiusRatio"))
+                                                             .toDouble(config.interaction.minimumMagnetRadiusRatio);
     config.interaction.magnetRadiusRatio = interaction.value(
         QStringLiteral("magnetRadiusRatio")).toDouble(config.interaction.magnetRadiusRatio);
+    config.interaction.maximumMagnetRadiusRatio = interaction.value(
+                                                                 QStringLiteral("maximumMagnetRadiusRatio"))
+                                                             .toDouble(config.interaction.maximumMagnetRadiusRatio);
     config.interaction.connectionRadiusRatio = interaction.value(
                                                               QStringLiteral("connectionRadiusRatio"))
                                                           .toDouble(config.interaction.connectionRadiusRatio);
@@ -176,7 +182,13 @@ PuzzleConfig PuzzleConfigLoader::load(const QString& resourcePath)
         || config.interaction.maximumZoom < config.interaction.minimumZoom
         || config.interaction.zoomedPieceSize <= 0.0
         || config.interaction.adaptiveZoomLimit < config.interaction.maximumZoom
-        || config.interaction.magnetRadiusRatio < 0.0
+        || config.interaction.minimumMagnetRadiusRatio < 0.0
+        || config.interaction.maximumMagnetRadiusRatio
+        < config.interaction.minimumMagnetRadiusRatio
+        || config.interaction.magnetRadiusRatio
+        < config.interaction.minimumMagnetRadiusRatio
+        || config.interaction.magnetRadiusRatio
+        > config.interaction.maximumMagnetRadiusRatio
         || config.interaction.connectionRadiusRatio < 0.0
         || config.interaction.connectionRadiusRatio > 1.0
         || config.interaction.maximumMagneticPull < 0.0

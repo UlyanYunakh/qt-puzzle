@@ -24,7 +24,9 @@
     "maximumZoom": 6.0,
     "zoomedPieceSize": 180.0,
     "adaptiveZoomLimit": 80.0,
+    "minimumMagnetRadiusRatio": 0.0,
     "magnetRadiusRatio": 0.25,
+    "maximumMagnetRadiusRatio": 0.5,
     "connectionRadiusRatio": 0.28,
     "maximumMagneticPull": 0.65,
     "zoomStep": 1.15
